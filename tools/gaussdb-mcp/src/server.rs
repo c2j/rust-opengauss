@@ -457,13 +457,7 @@ impl GaussdbMcp {
     }
 
     /// Create a multi-connection server with lazy resolvers (deferred keychain reads).
-    pub fn new_multi_lazy(
-        entries: Vec<(
-            String,
-            ResolveFn,
-        )>,
-        default_name: String,
-    ) -> Self {
+    pub fn new_multi_lazy(entries: Vec<(String, ResolveFn)>, default_name: String) -> Self {
         let mut connections = HashMap::new();
         for (name, resolver) in entries {
             connections.insert(name, ConnectionState::Pending(resolver));
