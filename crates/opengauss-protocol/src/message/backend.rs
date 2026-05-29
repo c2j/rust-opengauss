@@ -32,6 +32,7 @@ pub const PARAMETER_STATUS_TAG: u8 = b'S';
 pub const PARAMETER_DESCRIPTION_TAG: u8 = b't';
 pub const ROW_DESCRIPTION_TAG: u8 = b'T';
 pub const READY_FOR_QUERY_TAG: u8 = b'Z';
+pub const NEGOTIATE_PROTOCOL_VERSION_TAG: u8 = b'v';
 
 #[derive(Debug, Copy, Clone)]
 pub struct Header {
@@ -110,6 +111,7 @@ pub enum Message {
     PortalSuspended,
     ReadyForQuery(ReadyForQueryBody),
     RowDescription(RowDescriptionBody),
+    NegotiateProtocolVersion(NegotiateProtocolVersionBody),
 }
 
 impl Message {
@@ -323,6 +325,14 @@ impl Message {
             READY_FOR_QUERY_TAG => {
                 let status = buf.read_u8()?;
                 Message::ReadyForQuery(ReadyForQueryBody { status })
+            }
+            NEGOTIATE_PROTOCOL_VERSION_TAG => {
+                let _newest_minor = buf.read_i32::<BigEndian>()?;
+                let _unrecognized_count = buf.read_i32::<BigEndian>()?;
+                for _ in 0.._unrecognized_count {
+                    buf.read_cstr()?;
+                }
+                Message::NegotiateProtocolVersion(NegotiateProtocolVersionBody)
             }
             tag => {
                 return Err(io::Error::new(
@@ -935,6 +945,8 @@ impl ReadyForQueryBody {
         self.status
     }
 }
+
+pub struct NegotiateProtocolVersionBody;
 
 pub struct RowDescriptionBody {
     storage: Bytes,

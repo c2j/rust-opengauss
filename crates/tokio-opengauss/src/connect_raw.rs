@@ -439,6 +439,7 @@ where
             Some(msg @ Message::NoticeResponse(_)) => {
                 stream.delayed.push_back(BackendMessage::Async(msg))
             }
+            Some(Message::NegotiateProtocolVersion(_)) => {}
             Some(Message::ReadyForQuery(_)) => return Ok((process_id, secret_key, parameters)),
             Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
             Some(_) => return Err(Error::unexpected_message()),
