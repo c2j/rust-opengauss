@@ -201,6 +201,7 @@ impl Message {
             BACKEND_KEY_DATA_TAG => {
                 let process_id = buf.read_i32::<BigEndian>()?;
                 let secret_key = buf.read_i32::<BigEndian>()?;
+                let _ = buf.read_all();
                 Message::BackendKeyData(BackendKeyDataBody {
                     process_id,
                     secret_key,

@@ -425,14 +425,14 @@ where
     let mut parameters = HashMap::new();
 
     loop {
-    let first = loop {
-        match stream.try_next().await.map_err(Error::io)? {
-            Some(Message::NegotiateProtocolVersion(_)) => continue,
-            other => break other,
-        }
-    };
+        let first = loop {
+            match stream.try_next().await.map_err(Error::io)? {
+                Some(Message::NegotiateProtocolVersion(_)) => continue,
+                other => break other,
+            }
+        };
 
-    match first {
+        match first {
             Some(Message::BackendKeyData(body)) => {
                 process_id = body.process_id();
                 secret_key = body.secret_key();
