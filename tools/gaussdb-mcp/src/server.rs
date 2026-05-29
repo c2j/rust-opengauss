@@ -386,8 +386,11 @@ pub struct GetExecutionPlanParams {
     pub connection_name: Option<String>,
 }
 
+type ResolveFn = Arc<dyn (Fn() -> Result<String, String>) + Send + Sync>;
+type CallbackFn = Arc<dyn Fn() + Send + Sync>;
+
 enum ConnectionState {
-    Pending(Arc<dyn (Fn() -> Result<String, String>) + Send + Sync>),
+    Pending(ResolveFn),
     Connecting(String),
     Connected(Arc<tokio_opengauss::Client>),
     Unavailable(String),
@@ -396,7 +399,7 @@ enum ConnectionState {
 pub struct GaussdbMcp {
     connections: Arc<Mutex<HashMap<String, ConnectionState>>>,
     default_name: String,
-    on_connected: HashMap<String, Arc<dyn Fn() + Send + Sync>>,
+    on_connected: HashMap<String, CallbackFn>,
 }
 
 fn needs_tls(url: &str) -> bool {
@@ -457,7 +460,7 @@ impl GaussdbMcp {
     pub fn new_multi_lazy(
         entries: Vec<(
             String,
-            Arc<dyn (Fn() -> Result<String, String>) + Send + Sync>,
+            ResolveFn,
         )>,
         default_name: String,
     ) -> Self {
@@ -480,7 +483,7 @@ impl GaussdbMcp {
 
     /// Backward-compatible: single connection, lazy resolver.
     #[allow(dead_code)]
-    pub fn new_lazy(resolver: Arc<dyn (Fn() -> Result<String, String>) + Send + Sync>) -> Self {
+    pub fn new_lazy(resolver: ResolveFn) -> Self {
         Self::new_multi_lazy(
             vec![("default".to_string(), resolver)],
             "default".to_string(),
@@ -502,13 +505,13 @@ impl GaussdbMcp {
     }
 
     /// Register a per-connection callback fired on first successful connect.
-    pub fn set_on_connected(&mut self, name: String, callback: Arc<dyn Fn() + Send + Sync>) {
+    pub fn set_on_connected(&mut self, name: String, callback: CallbackFn) {
         self.on_connected.insert(name, callback);
     }
 
     /// Backward-compatible builder: sets callback for the default connection.
     #[allow(dead_code)]
-    pub fn on_connected(mut self, callback: Arc<dyn Fn() + Send + Sync>) -> Self {
+    pub fn on_connected(mut self, callback: CallbackFn) -> Self {
         self.on_connected
             .insert(self.default_name.clone(), callback);
         self
