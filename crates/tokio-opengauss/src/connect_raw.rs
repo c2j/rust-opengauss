@@ -290,7 +290,7 @@ where
     match stream.try_next().await.map_err(Error::io)? {
         Some(Message::AuthenticationOk) => Ok(()),
         Some(Message::ErrorResponse(body)) => Err(Error::db(body)),
-        Some(other) => {
+        Some(_other) => {
             eprintln!("DEBUG unexpected message in auth-ok: ");
             Err(Error::unexpected_message())
         }
@@ -387,9 +387,8 @@ where
     let body = match stream.try_next().await.map_err(Error::io)? {
         Some(Message::AuthenticationSaslContinue(body)) => body,
         Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
-        Some(other) => {
+        Some(_other) => {
             eprintln!("DEBUG unexpected message in authenticate");
-            let _ = other;
             return Err(Error::unexpected_message());
         }
         None => return Err(Error::closed()),
@@ -409,7 +408,7 @@ where
     let body = match stream.try_next().await.map_err(Error::io)? {
         Some(Message::AuthenticationSaslFinal(body)) => body,
         Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
-        Some(other) => {
+        Some(_other) => {
             eprintln!("DEBUG unexpected message in sasl-final: ");
             return Err(Error::unexpected_message());
         }
@@ -459,7 +458,7 @@ where
             Some(Message::NegotiateProtocolVersion(_)) => {}
             Some(Message::ReadyForQuery(_)) => return Ok((process_id, secret_key, parameters)),
             Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
-            Some(other) => {
+            Some(_other) => {
                 eprintln!("DEBUG unexpected message in post-auth: ");
                 return Err(Error::unexpected_message());
             }
