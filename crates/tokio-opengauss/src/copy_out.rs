@@ -5,8 +5,8 @@ use crate::{Error, Statement, query, slice_iter};
 use bytes::Bytes;
 use futures_util::Stream;
 use log::debug;
-use pin_project_lite::pin_project;
 use opengauss_protocol::message::backend::Message;
+use pin_project_lite::pin_project;
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
 

@@ -2,7 +2,7 @@ mod queries;
 mod server;
 
 use keyring::Entry;
-use rmcp::{transport::stdio, ServiceExt};
+use rmcp::{ServiceExt, transport::stdio};
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -98,12 +98,24 @@ impl NamedConnection {
         }
 
         let mut parts = Vec::new();
-        if let Some(ref host) = self.host { parts.push(format!("host={}", host)); }
-        if let Some(port) = self.port { parts.push(format!("port={}", port)); }
-        if let Some(ref user) = self.user { parts.push(format!("user={}", user)); }
-        if let Some(ref password) = self.password { parts.push(format!("password={}", password)); }
-        if let Some(ref dbname) = self.dbname { parts.push(format!("dbname={}", dbname)); }
-        if let Some(ref sslmode) = self.sslmode { parts.push(format!("sslmode={}", sslmode)); }
+        if let Some(ref host) = self.host {
+            parts.push(format!("host={}", host));
+        }
+        if let Some(port) = self.port {
+            parts.push(format!("port={}", port));
+        }
+        if let Some(ref user) = self.user {
+            parts.push(format!("user={}", user));
+        }
+        if let Some(ref password) = self.password {
+            parts.push(format!("password={}", password));
+        }
+        if let Some(ref dbname) = self.dbname {
+            parts.push(format!("dbname={}", dbname));
+        }
+        if let Some(ref sslmode) = self.sslmode {
+            parts.push(format!("sslmode={}", sslmode));
+        }
 
         Some(parts.join(" "))
     }
@@ -113,13 +125,18 @@ impl MultiConfig {
     fn resolve(self) -> Result<(Vec<NamedConnection>, Option<String>), String> {
         match self.connections {
             Some(ref conns) if !conns.is_empty() => {
-                let default = self.default_connection.clone()
+                let default = self
+                    .default_connection
+                    .clone()
                     .or_else(|| conns.first().map(|c| c.name.clone()));
                 Ok((self.connections.unwrap(), default))
             }
             _ => {
                 if self.host.is_none() && self.user.is_none() && self.url.is_none() {
-                    return Err("config must contain either [[connections]] or flat host/user fields".into());
+                    return Err(
+                        "config must contain either [[connections]] or flat host/user fields"
+                            .into(),
+                    );
                 }
                 let single = NamedConnection {
                     name: "default".to_string(),
@@ -157,14 +174,15 @@ enum LazyConnectionEntry {
 fn read_keyring_password(username: &str) -> Result<String, String> {
     let entry = Entry::new(KEYRING_SERVICE, username)
         .map_err(|e| format!("keyring entry creation failed: {}", e))?;
-    entry
-        .get_password()
-        .map_err(|e| format!(
+    entry.get_password().map_err(|e| {
+        format!(
             "keyring password not found for '{}'. Store it first:\n  \
              gaussdb-mcp --store-password <password> --config <path>\n  \
              or set password in config file as plaintext (will be migrated automatically).\n  \
-             Keyring error: {}", username, e
-        ))
+             Keyring error: {}",
+            username, e
+        )
+    })
 }
 
 fn store_keyring_password(username: &str, password: &str) -> Result<(), String> {
@@ -173,9 +191,12 @@ fn store_keyring_password(username: &str, password: &str) -> Result<(), String> 
     entry
         .set_password(password)
         .map_err(|e| format!("keyring store failed: {}", e))?;
-    let verified = entry
-        .get_password()
-        .map_err(|e| format!("keyring verification failed (password was stored but cannot be read back): {}", e))?;
+    let verified = entry.get_password().map_err(|e| {
+        format!(
+            "keyring verification failed (password was stored but cannot be read back): {}",
+            e
+        )
+    })?;
     if verified != password {
         return Err("keyring verification failed: read-back mismatch".to_string());
     }
@@ -243,12 +264,18 @@ fn find_config_path() -> Result<PathBuf, String> {
     }
 }
 
-fn resolve_single_connection(conn: &NamedConnection, config_path: Option<PathBuf>) -> Result<ResolvedConnection, String> {
+fn resolve_single_connection(
+    conn: &NamedConnection,
+    config_path: Option<PathBuf>,
+) -> Result<ResolvedConnection, String> {
     let mut conn = conn.clone();
     let keyring_user = conn.keyring_username();
 
     let is_sentinel = conn.password.as_deref() == Some(KEYRING_SENTINEL);
-    let is_plaintext = conn.password.as_ref().is_some_and(|p| p != KEYRING_SENTINEL);
+    let is_plaintext = conn
+        .password
+        .as_ref()
+        .is_some_and(|p| p != KEYRING_SENTINEL);
     let has_no_password = conn.password.is_none();
 
     let password_source = if is_plaintext {
@@ -292,7 +319,10 @@ fn build_lazy_resolver(conn: &NamedConnection) -> Result<LazyConnectionEntry, St
     let keyring_user = conn.keyring_username();
 
     let is_sentinel = conn.password.as_deref() == Some(KEYRING_SENTINEL);
-    let is_plaintext = conn.password.as_ref().is_some_and(|p| p != KEYRING_SENTINEL);
+    let is_plaintext = conn
+        .password
+        .as_ref()
+        .is_some_and(|p| p != KEYRING_SENTINEL);
 
     if is_plaintext || conn.url.is_some() {
         let resolved = resolve_single_connection(&conn, None)?;
@@ -327,12 +357,24 @@ fn build_lazy_resolver(conn: &NamedConnection) -> Result<LazyConnectionEntry, St
         };
 
         let mut parts = Vec::new();
-        if let Some(ref h) = host { parts.push(format!("host={}", h)); }
-        if let Some(p) = port { parts.push(format!("port={}", p)); }
-        if let Some(ref u) = user { parts.push(format!("user={}", u)); }
-        if let Some(pw) = password { parts.push(format!("password={}", pw)); }
-        if let Some(ref d) = dbname { parts.push(format!("dbname={}", d)); }
-        if let Some(ref s) = sslmode { parts.push(format!("sslmode={}", s)); }
+        if let Some(ref h) = host {
+            parts.push(format!("host={}", h));
+        }
+        if let Some(p) = port {
+            parts.push(format!("port={}", p));
+        }
+        if let Some(ref u) = user {
+            parts.push(format!("user={}", u));
+        }
+        if let Some(pw) = password {
+            parts.push(format!("password={}", pw));
+        }
+        if let Some(ref d) = dbname {
+            parts.push(format!("dbname={}", d));
+        }
+        if let Some(ref s) = sslmode {
+            parts.push(format!("sslmode={}", s));
+        }
 
         Ok(parts.join(" "))
     });
@@ -370,12 +412,10 @@ fn handle_store_password() {
         std::process::exit(1);
     });
 
-    let config_path = config_path
-        .or_else(default_config_path)
-        .unwrap_or_else(|| {
-            eprintln!("error: no config file specified and no default found");
-            std::process::exit(1);
-        });
+    let config_path = config_path.or_else(default_config_path).unwrap_or_else(|| {
+        eprintln!("error: no config file specified and no default found");
+        std::process::exit(1);
+    });
 
     if !config_path.exists() {
         eprintln!("error: config file not found: {}", config_path.display());
@@ -398,11 +438,17 @@ fn handle_store_password() {
     });
 
     let target = if let Some(ref name) = conn_name {
-        connections.iter().find(|c| c.name == *name).unwrap_or_else(|| {
-            eprintln!("error: connection '{}' not found in config", name);
-            eprintln!("  available: {:?}", connections.iter().map(|c| &c.name).collect::<Vec<_>>());
-            std::process::exit(1);
-        })
+        connections
+            .iter()
+            .find(|c| c.name == *name)
+            .unwrap_or_else(|| {
+                eprintln!("error: connection '{}' not found in config", name);
+                eprintln!(
+                    "  available: {:?}",
+                    connections.iter().map(|c| &c.name).collect::<Vec<_>>()
+                );
+                std::process::exit(1);
+            })
     } else {
         connections.first().unwrap_or_else(|| {
             eprintln!("error: no connections defined in config");
@@ -417,7 +463,10 @@ fn handle_store_password() {
         std::process::exit(1);
     }
 
-    println!("Password stored in OS keychain for '{}' (connection: '{}').", keyring_user, target.name);
+    println!(
+        "Password stored in OS keychain for '{}' (connection: '{}').",
+        keyring_user, target.name
+    );
 }
 
 fn resolve_all_connections() -> Result<(Vec<ResolvedConnection>, String), String> {
@@ -434,15 +483,28 @@ fn resolve_all_connections() -> Result<(Vec<ResolvedConnection>, String), String
     }
 
     let config_path = find_config_path()?;
-    let content = std::fs::read_to_string(&config_path)
-        .map_err(|e| format!("failed to read config file {}: {}", config_path.display(), e))?;
+    let content = std::fs::read_to_string(&config_path).map_err(|e| {
+        format!(
+            "failed to read config file {}: {}",
+            config_path.display(),
+            e
+        )
+    })?;
 
-    let config: MultiConfig = toml::from_str(&content)
-        .map_err(|e| format!("failed to parse config file {}: {}", config_path.display(), e))?;
+    let config: MultiConfig = toml::from_str(&content).map_err(|e| {
+        format!(
+            "failed to parse config file {}: {}",
+            config_path.display(),
+            e
+        )
+    })?;
 
     let (connections, default_name) = config.resolve()?;
     let default_name = default_name.unwrap_or_else(|| {
-        connections.first().map(|c| c.name.clone()).unwrap_or_default()
+        connections
+            .first()
+            .map(|c| c.name.clone())
+            .unwrap_or_default()
     });
 
     let mut resolved = Vec::with_capacity(connections.len());
@@ -463,19 +525,35 @@ fn resolve_all_connections_lazy() -> Result<(Vec<LazyConnectionEntry>, String), 
             keyring_username: String::new(),
             password_source: PasswordSource::EnvVar,
         };
-        return Ok((vec![LazyConnectionEntry::Ready(resolved)], "default".to_string()));
+        return Ok((
+            vec![LazyConnectionEntry::Ready(resolved)],
+            "default".to_string(),
+        ));
     }
 
     let config_path = find_config_path()?;
-    let content = std::fs::read_to_string(&config_path)
-        .map_err(|e| format!("failed to read config file {}: {}", config_path.display(), e))?;
+    let content = std::fs::read_to_string(&config_path).map_err(|e| {
+        format!(
+            "failed to read config file {}: {}",
+            config_path.display(),
+            e
+        )
+    })?;
 
-    let config: MultiConfig = toml::from_str(&content)
-        .map_err(|e| format!("failed to parse config file {}: {}", config_path.display(), e))?;
+    let config: MultiConfig = toml::from_str(&content).map_err(|e| {
+        format!(
+            "failed to parse config file {}: {}",
+            config_path.display(),
+            e
+        )
+    })?;
 
     let (connections, default_name) = config.resolve()?;
     let default_name = default_name.unwrap_or_else(|| {
-        connections.first().map(|c| c.name.clone()).unwrap_or_default()
+        connections
+            .first()
+            .map(|c| c.name.clone())
+            .unwrap_or_default()
     });
 
     let mut entries = Vec::with_capacity(connections.len());
@@ -492,12 +570,16 @@ fn init_logging() {
         .join("gaussdb-mcp");
 
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
-        eprintln!("warning: cannot create log dir {}: {}", log_dir.display(), e);
+        eprintln!(
+            "warning: cannot create log dir {}: {}",
+            log_dir.display(),
+            e
+        );
     }
 
     let file_appender = tracing_appender::rolling::daily(&log_dir, "gaussdb-mcp.log");
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("gaussdb_mcp=info"));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("gaussdb_mcp=info"));
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)
@@ -520,7 +602,10 @@ async fn handle_check_connection(resolved: &ResolvedConnection, verbose: bool) {
 
     match resolved.password_source {
         PasswordSource::Keyring => {
-            eprintln!("[Keyring] Password read from OS keychain (user: {})", resolved.keyring_username);
+            eprintln!(
+                "[Keyring] Password read from OS keychain (user: {})",
+                resolved.keyring_username
+            );
             let entry_result = Entry::new(KEYRING_SERVICE, &resolved.keyring_username)
                 .and_then(|e| e.get_password());
             match entry_result {
@@ -528,13 +613,20 @@ async fn handle_check_connection(resolved: &ResolvedConnection, verbose: bool) {
                     if pw.is_empty() {
                         eprintln!("  ⚠ WARNING: keyring returned empty password");
                     } else {
-                        eprintln!("  ✓ Keyring accessible, password retrieved ({} chars)", pw.len());
+                        eprintln!(
+                            "  ✓ Keyring accessible, password retrieved ({} chars)",
+                            pw.len()
+                        );
                     }
                 }
                 Err(e) => {
                     eprintln!("  ✗ Keyring read-back failed: {}", e);
-                    eprintln!("    This means the password was already read once but keyring may be unreliable.");
-                    eprintln!("    Consider changing password in config from \"keyring\" back to plaintext.");
+                    eprintln!(
+                        "    This means the password was already read once but keyring may be unreliable."
+                    );
+                    eprintln!(
+                        "    Consider changing password in config from \"keyring\" back to plaintext."
+                    );
                 }
             }
             eprintln!();
@@ -543,7 +635,9 @@ async fn handle_check_connection(resolved: &ResolvedConnection, verbose: bool) {
             eprintln!("[Keyring] Password from config file (plaintext)");
             match check_keyring_available(&resolved.keyring_username) {
                 Ok(()) => {
-                    eprintln!("  ✓ OS keychain is available — password will be migrated on first MCP connection");
+                    eprintln!(
+                        "  ✓ OS keychain is available — password will be migrated on first MCP connection"
+                    );
                 }
                 Err(e) => {
                     eprintln!("  ⚠ OS keychain NOT available: {}", e);
@@ -586,12 +680,24 @@ async fn handle_check_connection(resolved: &ResolvedConnection, verbose: bool) {
             if let Some(ref d) = details {
                 print_verbose_details(d);
             }
-            results.push(AttemptResult { mode: "NoTls", success: true, version: Some(version), error: None, verbose_details: details });
+            results.push(AttemptResult {
+                mode: "NoTls",
+                success: true,
+                version: Some(version),
+                error: None,
+                verbose_details: details,
+            });
         }
         Err(e) => {
             let chain = format_error_chain(&e);
             eprintln!("  ✗ {}", chain);
-            results.push(AttemptResult { mode: "NoTls", success: false, version: None, error: Some(chain), verbose_details: None });
+            results.push(AttemptResult {
+                mode: "NoTls",
+                success: false,
+                version: None,
+                error: Some(chain),
+                verbose_details: None,
+            });
         }
     }
 
@@ -614,12 +720,24 @@ async fn handle_check_connection(resolved: &ResolvedConnection, verbose: bool) {
                     }
                 }
             }
-            results.push(AttemptResult { mode: "TLS (no verify)", success: true, version: Some(version), error: None, verbose_details: details });
+            results.push(AttemptResult {
+                mode: "TLS (no verify)",
+                success: true,
+                version: Some(version),
+                error: None,
+                verbose_details: details,
+            });
         }
         Err(e) => {
             let chain = format_error_chain(e.as_ref());
             eprintln!("  ✗ {}", chain);
-            results.push(AttemptResult { mode: "TLS (no verify)", success: false, version: None, error: Some(chain), verbose_details: None });
+            results.push(AttemptResult {
+                mode: "TLS (no verify)",
+                success: false,
+                version: None,
+                error: Some(chain),
+                verbose_details: None,
+            });
         }
     }
 
@@ -639,12 +757,24 @@ async fn handle_check_connection(resolved: &ResolvedConnection, verbose: bool) {
                     }
                 }
             }
-            results.push(AttemptResult { mode: "TLS (verify)", success: true, version: Some(version), error: None, verbose_details: details });
+            results.push(AttemptResult {
+                mode: "TLS (verify)",
+                success: true,
+                version: Some(version),
+                error: None,
+                verbose_details: details,
+            });
         }
         Err(e) => {
             let chain = format_error_chain(e.as_ref());
             eprintln!("  ✗ {}", chain);
-            results.push(AttemptResult { mode: "TLS (verify)", success: false, version: None, error: Some(chain), verbose_details: None });
+            results.push(AttemptResult {
+                mode: "TLS (verify)",
+                success: false,
+                version: None,
+                error: Some(chain),
+                verbose_details: None,
+            });
         }
     }
 
@@ -657,12 +787,23 @@ async fn handle_check_connection(resolved: &ResolvedConnection, verbose: bool) {
     for r in &results {
         if r.success {
             any_success = true;
-            let elapsed_str = r.verbose_details.as_ref()
+            let elapsed_str = r
+                .verbose_details
+                .as_ref()
                 .map(|d| format!(" ({}ms)", d.elapsed.as_millis()))
                 .unwrap_or_default();
-            eprintln!("  {:20} ✓  {}{}", r.mode, r.version.as_deref().unwrap_or("(unknown)"), elapsed_str);
+            eprintln!(
+                "  {:20} ✓  {}{}",
+                r.mode,
+                r.version.as_deref().unwrap_or("(unknown)"),
+                elapsed_str
+            );
         } else {
-            eprintln!("  {:20} ✗  {}", r.mode, r.error.as_deref().unwrap_or("unknown"));
+            eprintln!(
+                "  {:20} ✗  {}",
+                r.mode,
+                r.error.as_deref().unwrap_or("unknown")
+            );
         }
     }
 
@@ -697,9 +838,11 @@ fn check_keyring_available(username: &str) -> Result<(), String> {
     let test_key = "__gaussdb_mcp_keyring_test__";
     let entry = Entry::new(KEYRING_SERVICE, username)
         .map_err(|e| format!("keyring entry creation failed: {}", e))?;
-    entry.set_password(test_key)
+    entry
+        .set_password(test_key)
         .map_err(|e| format!("keyring write failed: {}", e))?;
-    let read_back = entry.get_password()
+    let read_back = entry
+        .get_password()
         .map_err(|e| format!("keyring read-back failed: {}", e))?;
     if read_back != test_key {
         return Err("keyring read-back mismatch".to_string());
@@ -713,14 +856,30 @@ async fn query_verbose_details(
 ) -> VerboseDetails {
     async fn query_scalar(client: &tokio_opengauss::Client, sql: &str) -> Option<String> {
         match client.query_one(sql, &[]).await {
-            Ok(row) => row.try_get::<_, Option<&str>>(0).ok().flatten().map(String::from),
+            Ok(row) => row
+                .try_get::<_, Option<&str>>(0)
+                .ok()
+                .flatten()
+                .map(String::from),
             Err(_) => None,
         }
     }
 
-    let server_version = query_scalar(client, "SELECT setting FROM pg_settings WHERE name = 'server_version'").await;
-    let server_version_num = query_scalar(client, "SELECT setting FROM pg_settings WHERE name = 'server_version_num'").await;
-    let protocol_version = query_scalar(client, "SELECT setting FROM pg_settings WHERE name = 'protocol_version'").await;
+    let server_version = query_scalar(
+        client,
+        "SELECT setting FROM pg_settings WHERE name = 'server_version'",
+    )
+    .await;
+    let server_version_num = query_scalar(
+        client,
+        "SELECT setting FROM pg_settings WHERE name = 'server_version_num'",
+    )
+    .await;
+    let protocol_version = query_scalar(
+        client,
+        "SELECT setting FROM pg_settings WHERE name = 'protocol_version'",
+    )
+    .await;
     let current_user = query_scalar(client, "SELECT current_user::text").await;
     let current_database = query_scalar(client, "SELECT current_database()::text").await;
     let server_addr = query_scalar(client, "SELECT inet_server_addr()::text").await;
@@ -730,11 +889,31 @@ async fn query_verbose_details(
     let ssl_is_used_str = query_scalar(client, "SELECT ssl_is_used()::text").await;
     let ssl_version = query_scalar(client, "SELECT ssl_version()").await;
     let ssl_cipher = query_scalar(client, "SELECT ssl_cipher()").await;
-    let guc_max_connections = query_scalar(client, "SELECT setting FROM pg_settings WHERE name = 'max_connections'").await;
-    let guc_shared_buffers = query_scalar(client, "SELECT setting FROM pg_settings WHERE name = 'shared_buffers'").await;
-    let guc_work_mem = query_scalar(client, "SELECT setting FROM pg_settings WHERE name = 'work_mem'").await;
-    let guc_timezone = query_scalar(client, "SELECT setting FROM pg_settings WHERE name = 'TimeZone'").await;
-    let guc_data_directory = query_scalar(client, "SELECT setting FROM pg_settings WHERE name = 'data_directory'").await;
+    let guc_max_connections = query_scalar(
+        client,
+        "SELECT setting FROM pg_settings WHERE name = 'max_connections'",
+    )
+    .await;
+    let guc_shared_buffers = query_scalar(
+        client,
+        "SELECT setting FROM pg_settings WHERE name = 'shared_buffers'",
+    )
+    .await;
+    let guc_work_mem = query_scalar(
+        client,
+        "SELECT setting FROM pg_settings WHERE name = 'work_mem'",
+    )
+    .await;
+    let guc_timezone = query_scalar(
+        client,
+        "SELECT setting FROM pg_settings WHERE name = 'TimeZone'",
+    )
+    .await;
+    let guc_data_directory = query_scalar(
+        client,
+        "SELECT setting FROM pg_settings WHERE name = 'data_directory'",
+    )
+    .await;
 
     let is_in_recovery = is_in_recovery_str
         .as_deref()
@@ -771,7 +950,9 @@ fn extract_tls_cert_info(host: &str, port: u16, verify: bool) -> Result<TlsCertI
 
     let addr = format!("{}:{}", host, port);
     let mut stream = TcpStream::connect_timeout(
-        &addr.parse().map_err(|e| format!("invalid address '{}': {}", addr, e))?,
+        &addr
+            .parse()
+            .map_err(|e| format!("invalid address '{}': {}", addr, e))?,
         Duration::from_secs(5),
     )
     .map_err(|e| format!("TCP connect to {} failed: {}", addr, e))?;
@@ -820,8 +1001,16 @@ fn extract_tls_cert_info(host: &str, port: u16, verify: bool) -> Result<TlsCertI
     Ok(TlsCertInfo {
         subject: x509.subject().to_string(),
         issuer: x509.issuer().to_string(),
-        valid_from: x509.validity().not_before.to_rfc2822().map_err(|e| e.to_string())?,
-        valid_to: x509.validity().not_after.to_rfc2822().map_err(|e| e.to_string())?,
+        valid_from: x509
+            .validity()
+            .not_before
+            .to_rfc2822()
+            .map_err(|e| e.to_string())?,
+        valid_to: x509
+            .validity()
+            .not_after
+            .to_rfc2822()
+            .map_err(|e| e.to_string())?,
         serial: serial_hex,
     })
 }
@@ -846,26 +1035,70 @@ fn parse_host_port_from_url(url: &str) -> Option<(String, u16)> {
 
 fn print_verbose_details(details: &VerboseDetails) {
     eprintln!("  [verbose] Connection Details:");
-    eprintln!("    {:24} {}", "server_version", details.server_version.as_deref().unwrap_or("—"));
-    eprintln!("    {:24} {}", "server_version_num", details.server_version_num.as_deref().unwrap_or("—"));
-    eprintln!("    {:24} {}", "protocol_version", details.protocol_version.as_deref().unwrap_or("—"));
-    eprintln!("    {:24} {}", "current_user", details.current_user.as_deref().unwrap_or("—"));
-    eprintln!("    {:24} {}", "current_database", details.current_database.as_deref().unwrap_or("—"));
-    eprintln!("    {:24} {}", "server_addr", details.server_addr.as_deref().unwrap_or("—"));
-    eprintln!("    {:24} {}", "server_port", details.server_port.as_deref().unwrap_or("—"));
-    eprintln!("    {:24} {}", "server_start_time", details.start_time.as_deref().unwrap_or("—"));
+    eprintln!(
+        "    {:24} {}",
+        "server_version",
+        details.server_version.as_deref().unwrap_or("—")
+    );
+    eprintln!(
+        "    {:24} {}",
+        "server_version_num",
+        details.server_version_num.as_deref().unwrap_or("—")
+    );
+    eprintln!(
+        "    {:24} {}",
+        "protocol_version",
+        details.protocol_version.as_deref().unwrap_or("—")
+    );
+    eprintln!(
+        "    {:24} {}",
+        "current_user",
+        details.current_user.as_deref().unwrap_or("—")
+    );
+    eprintln!(
+        "    {:24} {}",
+        "current_database",
+        details.current_database.as_deref().unwrap_or("—")
+    );
+    eprintln!(
+        "    {:24} {}",
+        "server_addr",
+        details.server_addr.as_deref().unwrap_or("—")
+    );
+    eprintln!(
+        "    {:24} {}",
+        "server_port",
+        details.server_port.as_deref().unwrap_or("—")
+    );
+    eprintln!(
+        "    {:24} {}",
+        "server_start_time",
+        details.start_time.as_deref().unwrap_or("—")
+    );
     match details.is_in_recovery {
         Some(true) => eprintln!("    {:24} true  (standby / recovering)", "is_in_recovery"),
         Some(false) => eprintln!("    {:24} false (primary)", "is_in_recovery"),
         None => eprintln!("    {:24} —", "is_in_recovery"),
     }
-    eprintln!("    {:24} {}ms", "connect_time", details.elapsed.as_millis());
+    eprintln!(
+        "    {:24} {}ms",
+        "connect_time",
+        details.elapsed.as_millis()
+    );
 
     if details.ssl_is_used == Some(true) {
         eprintln!();
         eprintln!("  [verbose] TLS Session:");
-        eprintln!("    {:24} {}", "ssl_version", details.ssl_version.as_deref().unwrap_or("—"));
-        eprintln!("    {:24} {}", "ssl_cipher", details.ssl_cipher.as_deref().unwrap_or("—"));
+        eprintln!(
+            "    {:24} {}",
+            "ssl_version",
+            details.ssl_version.as_deref().unwrap_or("—")
+        );
+        eprintln!(
+            "    {:24} {}",
+            "ssl_cipher",
+            details.ssl_cipher.as_deref().unwrap_or("—")
+        );
     }
 
     let has_any_guc = details.guc_max_connections.is_some()
@@ -876,11 +1109,31 @@ fn print_verbose_details(details: &VerboseDetails) {
     if has_any_guc {
         eprintln!();
         eprintln!("  [verbose] Server Configuration (GUC):");
-        eprintln!("    {:24} {}", "max_connections", details.guc_max_connections.as_deref().unwrap_or("—"));
-        eprintln!("    {:24} {}", "shared_buffers", details.guc_shared_buffers.as_deref().unwrap_or("—"));
-        eprintln!("    {:24} {}", "work_mem", details.guc_work_mem.as_deref().unwrap_or("—"));
-        eprintln!("    {:24} {}", "timezone", details.guc_timezone.as_deref().unwrap_or("—"));
-        eprintln!("    {:24} {}", "data_directory", details.guc_data_directory.as_deref().unwrap_or("—"));
+        eprintln!(
+            "    {:24} {}",
+            "max_connections",
+            details.guc_max_connections.as_deref().unwrap_or("—")
+        );
+        eprintln!(
+            "    {:24} {}",
+            "shared_buffers",
+            details.guc_shared_buffers.as_deref().unwrap_or("—")
+        );
+        eprintln!(
+            "    {:24} {}",
+            "work_mem",
+            details.guc_work_mem.as_deref().unwrap_or("—")
+        );
+        eprintln!(
+            "    {:24} {}",
+            "timezone",
+            details.guc_timezone.as_deref().unwrap_or("—")
+        );
+        eprintln!(
+            "    {:24} {}",
+            "data_directory",
+            details.guc_data_directory.as_deref().unwrap_or("—")
+        );
     }
 }
 
@@ -894,14 +1147,22 @@ fn print_tls_cert_info(cert: &TlsCertInfo) {
     eprintln!("    {:18} {}", "Not After", cert.valid_to);
 }
 
-async fn try_connect_notls(url: &str, verbose: bool) -> Result<(String, Option<VerboseDetails>), tokio_opengauss::Error> {
+async fn try_connect_notls(
+    url: &str,
+    verbose: bool,
+) -> Result<(String, Option<VerboseDetails>), tokio_opengauss::Error> {
     let start = Instant::now();
     let (client, connection) = tokio_opengauss::connect(url, tokio_opengauss::NoTls).await?;
     let elapsed = start.elapsed();
-    tokio::spawn(async move { let _ = connection.await; });
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
 
     let row = client.query_one("SELECT version()", &[]).await?;
-    let version = row.get::<_, Option<&str>>(0).unwrap_or("(unknown)").to_string();
+    let version = row
+        .get::<_, Option<&str>>(0)
+        .unwrap_or("(unknown)")
+        .to_string();
 
     let verbose_details = if verbose {
         Some(query_verbose_details(&client, elapsed).await)
@@ -912,7 +1173,11 @@ async fn try_connect_notls(url: &str, verbose: bool) -> Result<(String, Option<V
     Ok((version, verbose_details))
 }
 
-async fn try_connect_tls(url: &str, verify: bool, verbose: bool) -> Result<(String, Option<VerboseDetails>), Box<dyn std::error::Error + Send + Sync>> {
+async fn try_connect_tls(
+    url: &str,
+    verify: bool,
+    verbose: bool,
+) -> Result<(String, Option<VerboseDetails>), Box<dyn std::error::Error + Send + Sync>> {
     let start = Instant::now();
     let mut builder = native_tls::TlsConnector::builder();
     if !verify {
@@ -923,10 +1188,15 @@ async fn try_connect_tls(url: &str, verify: bool, verbose: bool) -> Result<(Stri
     let tls = opengauss_native_tls::MakeTlsConnector::new(connector);
     let (client, connection) = tokio_opengauss::connect(url, tls).await?;
     let elapsed = start.elapsed();
-    tokio::spawn(async move { let _ = connection.await; });
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
 
     let row = client.query_one("SELECT version()", &[]).await?;
-    let version = row.get::<_, Option<&str>>(0).unwrap_or("(unknown)").to_string();
+    let version = row
+        .get::<_, Option<&str>>(0)
+        .unwrap_or("(unknown)")
+        .to_string();
 
     let verbose_details = if verbose {
         Some(query_verbose_details(&client, elapsed).await)
@@ -950,7 +1220,9 @@ fn print_help() {
     eprintln!("OPTIONS:");
     eprintln!("    -h, --help                Print this help message");
     eprintln!("    --check-connection [NAME] Test database connectivity and exit");
-    eprintln!("    -v, --verbose             Show detailed connection info (with --check-connection)");
+    eprintln!(
+        "    -v, --verbose             Show detailed connection info (with --check-connection)"
+    );
     eprintln!("    --store-password <PASS>   Store password in OS keychain");
     eprintln!("    --name <NAME>             Target connection name (for --store-password)");
     eprintln!("    --config <PATH>           Path to config file (default: ~/.gaussdb-mcp.toml)");
@@ -988,10 +1260,14 @@ fn print_help() {
     eprintln!(r#"    gaussdb-mcp --check-connection"#);
     eprintln!();
     eprintln!("    # Store password for a named connection");
-    eprintln!(r#"    gaussdb-mcp --store-password 'MyP@ss123' --name prod --config ~/.gaussdb-mcp.toml"#);
+    eprintln!(
+        r#"    gaussdb-mcp --store-password 'MyP@ss123' --name prod --config ~/.gaussdb-mcp.toml"#
+    );
     eprintln!();
     eprintln!("    # Run as MCP server (for Claude/Cursor/etc.)");
-    eprintln!(r#"    GAUSSDB_URL="host=127.0.0.1 user=gaussdb password=Enmo@123 dbname=postgres" gaussdb-mcp"#);
+    eprintln!(
+        r#"    GAUSSDB_URL="host=127.0.0.1 user=gaussdb password=Enmo@123 dbname=postgres" gaussdb-mcp"#
+    );
 }
 
 #[tokio::main]
@@ -1019,21 +1295,28 @@ async fn main() {
         });
 
         let target_name = if let Some(pos) = args.iter().position(|a| a == "--check-connection") {
-            args.get(pos + 1)
-                .filter(|a| !a.starts_with('-'))
-                .cloned()
+            args.get(pos + 1).filter(|a| !a.starts_with('-')).cloned()
         } else {
             None
         };
 
         let target = if let Some(ref name) = target_name {
-            all_resolved.iter().find(|c| c.name == *name).unwrap_or_else(|| {
-                eprintln!("error: connection '{}' not found", name);
-                eprintln!("  available: {:?}", all_resolved.iter().map(|c| &c.name).collect::<Vec<_>>());
-                std::process::exit(1);
-            })
+            all_resolved
+                .iter()
+                .find(|c| c.name == *name)
+                .unwrap_or_else(|| {
+                    eprintln!("error: connection '{}' not found", name);
+                    eprintln!(
+                        "  available: {:?}",
+                        all_resolved.iter().map(|c| &c.name).collect::<Vec<_>>()
+                    );
+                    std::process::exit(1);
+                })
         } else {
-            all_resolved.iter().find(|c| c.name == default_name).unwrap_or(&all_resolved[0])
+            all_resolved
+                .iter()
+                .find(|c| c.name == default_name)
+                .unwrap_or(&all_resolved[0])
         };
 
         handle_check_connection(target, verbose).await;
@@ -1067,13 +1350,22 @@ async fn main() {
                             return;
                         }
                         migrated.store(true, std::sync::atomic::Ordering::Relaxed);
-                        info!("migrating plaintext password to OS keychain for '{}'", keyring_user);
+                        info!(
+                            "migrating plaintext password to OS keychain for '{}'",
+                            keyring_user
+                        );
                         if let Err(e) = store_keyring_password(&keyring_user, &plaintext) {
-                            warn!("failed to store password in keychain: {} (config file NOT modified)", e);
+                            warn!(
+                                "failed to store password in keychain: {} (config file NOT modified)",
+                                e
+                            );
                         } else if let Err(e) = rewrite_password_to_sentinel(&path) {
                             warn!("failed to update config file: {}", e);
                         } else {
-                            info!("password migrated to OS keychain for '{}', config updated", keyring_user);
+                            info!(
+                                "password migrated to OS keychain for '{}', config updated",
+                                keyring_user
+                            );
                         }
                     });
                     callbacks_to_register.push((conn_name.clone(), cb));
@@ -1090,8 +1382,15 @@ async fn main() {
     let mut server = if !eager_entries.is_empty() && lazy_resolvers.is_empty() {
         server::GaussdbMcp::new_multi_disconnected(eager_entries, default_name)
     } else if !lazy_resolvers.is_empty() {
-        let all_lazy = eager_entries.into_iter()
-            .map(|(name, url)| (name, Arc::new(move || Ok(url.clone())) as Arc<dyn (Fn() -> Result<String, String>) + Send + Sync>))
+        let all_lazy = eager_entries
+            .into_iter()
+            .map(|(name, url)| {
+                (
+                    name,
+                    Arc::new(move || Ok(url.clone()))
+                        as Arc<dyn (Fn() -> Result<String, String>) + Send + Sync>,
+                )
+            })
             .chain(lazy_resolvers)
             .collect();
         server::GaussdbMcp::new_multi_lazy(all_lazy, default_name)

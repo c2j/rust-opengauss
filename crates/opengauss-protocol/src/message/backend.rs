@@ -260,7 +260,9 @@ impl Message {
                         _ => {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidInput,
-                                format!("unknown password stored method `{password_stored_method}`"),
+                                format!(
+                                    "unknown password stored method `{password_stored_method}`"
+                                ),
                             ));
                         }
                     }
@@ -271,9 +273,10 @@ impl Message {
                     buf.read_exact(&mut salt)?;
                     let mut md5_salt = [0u8; 4];
                     buf.read_exact(&mut md5_salt)?;
-                    Message::AuthenticationMd5Sha256Password(
-                        AuthenticationMd5Sha256PasswordBody { salt, md5_salt },
-                    )
+                    Message::AuthenticationMd5Sha256Password(AuthenticationMd5Sha256PasswordBody {
+                        salt,
+                        md5_salt,
+                    })
                 }
                 12 => {
                     let storage = buf.read_all();
@@ -287,14 +290,12 @@ impl Message {
                     let mut token = [0u8; 8];
                     buf.read_exact(&mut token)?;
                     let server_iteration = buf.read_i32::<BigEndian>()?;
-                    Message::AuthenticationSm3Password(
-                        AuthenticationSm3PasswordBody {
-                            password_stored_method,
-                            random64code,
-                            token,
-                            server_iteration,
-                        },
-                    )
+                    Message::AuthenticationSm3Password(AuthenticationSm3PasswordBody {
+                        password_stored_method,
+                        random64code,
+                        token,
+                        server_iteration,
+                    })
                 }
                 tag => {
                     return Err(io::Error::new(

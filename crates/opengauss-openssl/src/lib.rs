@@ -64,11 +64,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, BufReader, ReadBuf};
-use tokio_openssl::SslStream;
 use tokio_opengauss::tls;
 #[cfg(feature = "runtime")]
 use tokio_opengauss::tls::MakeTlsConnect;
 use tokio_opengauss::tls::{ChannelBinding, TlsConnect};
+use tokio_openssl::SslStream;
 
 #[cfg(test)]
 mod test;

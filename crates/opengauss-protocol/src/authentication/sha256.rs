@@ -90,8 +90,8 @@ pub fn rfc5802_algorithm(
 
 /// Decode a hex byte slice to bytes
 fn hex_decode(hex: &[u8]) -> io::Result<Vec<u8>> {
-    let hex_str = std::str::from_utf8(hex)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    let hex_str =
+        std::str::from_utf8(hex).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     hex::decode(hex_str).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
 }
 
@@ -145,7 +145,8 @@ pub fn md5_sha256_hash(
     // sha256_hex = hex(salt) + hex(server_key) + hex(stored_key)
     let sha256_hex = format!(
         "{}{}{}",
-        std::str::from_utf8(salt_hex).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?,
+        std::str::from_utf8(salt_hex)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?,
         hex_encode(&server_key),
         hex_encode(&stored_key),
     );
@@ -153,8 +154,8 @@ pub fn md5_sha256_hash(
     // Step 2: MD5 encrypt the sha256 hex digest with md5_salt
     // md5(sha256_hex) → inner_hex
     // md5(inner_hex + md5_salt) → result
-    use md5::{Digest, Md5};
     use crate::hex::LowerHexWrapper;
+    use md5::{Digest, Md5};
     let mut md5 = Md5::new();
     md5.update(sha256_hex.as_bytes());
     let inner = LowerHexWrapper(md5.finalize_reset());
@@ -181,13 +182,19 @@ pub fn sm3_algorithm(
     if salt_bytes.len() != 32 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("invalid salt length: expected 32 bytes, got {}", salt_bytes.len()),
+            format!(
+                "invalid salt length: expected 32 bytes, got {}",
+                salt_bytes.len()
+            ),
         ));
     }
     if token_bytes.len() != 4 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("invalid token length: expected 4 bytes, got {}", token_bytes.len()),
+            format!(
+                "invalid token length: expected 4 bytes, got {}",
+                token_bytes.len()
+            ),
         ));
     }
 
@@ -239,13 +246,8 @@ mod tests {
         let password = b"testpassword";
         let random64code = [b'0'; 64];
         let token = [b'0'; 8];
-        let result =
-            rfc5802_algorithm(password, &random64code, &token, 2048).unwrap();
-        assert_eq!(
-            result.len(),
-            64,
-            "Output must be 64 hex chars (32 bytes)"
-        );
+        let result = rfc5802_algorithm(password, &random64code, &token, 2048).unwrap();
+        assert_eq!(result.len(), 64, "Output must be 64 hex chars (32 bytes)");
     }
 
     #[test]
@@ -253,10 +255,8 @@ mod tests {
         let password = b"testpassword";
         let random64code = [b'0'; 64];
         let token = [b'0'; 8];
-        let r1 =
-            rfc5802_algorithm(password, &random64code, &token, 2048).unwrap();
-        let r2 =
-            rfc5802_algorithm(password, &random64code, &token, 2048).unwrap();
+        let r1 = rfc5802_algorithm(password, &random64code, &token, 2048).unwrap();
+        let r2 = rfc5802_algorithm(password, &random64code, &token, 2048).unwrap();
         assert_eq!(r1, r2, "Same inputs must produce same output");
     }
 
