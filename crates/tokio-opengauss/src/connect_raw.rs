@@ -283,7 +283,7 @@ where
             ));
         }
         Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
-        Some(_) => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./connect_raw.rs"); e }),
+        Some(_) => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED at {}:{}", file!(), line!()); e }),
         None => return Err(Error::closed()),
     }
 
@@ -292,7 +292,7 @@ where
         Some(Message::ErrorResponse(body)) => Err(Error::db(body)),
         Some(_other) => {
             eprintln!("DEBUG unexpected message in auth-ok: ");
-            Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./connect_raw.rs"); e })
+            Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED at {}:{}", file!(), line!()); e })
         }
         None => Err(Error::closed()),
     }
@@ -389,7 +389,7 @@ where
         Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
         Some(_other) => {
             
-            return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./connect_raw.rs"); e });
+            return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED at {}:{}", file!(), line!()); e });
         }
         None => return Err(Error::closed()),
     };
@@ -410,7 +410,7 @@ where
         Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
         Some(_other) => {
             eprintln!("DEBUG unexpected message in sasl-final: ");
-            return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./connect_raw.rs"); e });
+            return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED at {}:{}", file!(), line!()); e });
         }
         None => return Err(Error::closed()),
     };
@@ -460,7 +460,7 @@ where
             Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
             Some(_other) => {
                 eprintln!("DEBUG unexpected message in post-auth: ");
-                return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./connect_raw.rs"); e });
+                return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED at {}:{}", file!(), line!()); e });
             }
             None => return Err(Error::closed()),
         }
