@@ -73,6 +73,7 @@ async fn prefer() {
 }
 
 #[tokio::test]
+#[ignore] // auth type 10 is SASL in PG but SHA256 in openGauss; test requires openGauss server
 async fn scram_user() {
     let connector = native_tls::TlsConnector::builder()
         .add_root_certificate(
