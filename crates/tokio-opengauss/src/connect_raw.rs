@@ -290,17 +290,14 @@ where
             ));
         }
         Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
-        Some(_) => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED at {}:{}", file!(), line!()); e }),
+        Some(_) => return Err(Error::unexpected_message()),
         None => return Err(Error::closed()),
     }
 
     match stream.try_next().await.map_err(Error::io)? {
         Some(Message::AuthenticationOk) => Ok(()),
         Some(Message::ErrorResponse(body)) => Err(Error::db(body)),
-        Some(_other) => {
-            eprintln!("DEBUG unexpected message in auth-ok: ");
-            Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED at {}:{}", file!(), line!()); e })
-        }
+        Some(_) => Err(Error::unexpected_message()),
         None => Err(Error::closed()),
     }
 }
@@ -395,8 +392,7 @@ where
         Some(Message::AuthenticationSaslContinue(body)) => body,
         Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
         Some(_other) => {
-            
-            return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED at {}:{}", file!(), line!()); e });
+            return Err(Error::unexpected_message());
         }
         None => return Err(Error::closed()),
     };
@@ -415,10 +411,7 @@ where
     let body = match stream.try_next().await.map_err(Error::io)? {
         Some(Message::AuthenticationSaslFinal(body)) => body,
         Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
-        Some(_other) => {
-            eprintln!("DEBUG unexpected message in sasl-final: ");
-            return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED at {}:{}", file!(), line!()); e });
-        }
+        Some(_) => return Err(Error::unexpected_message()),
         None => return Err(Error::closed()),
     };
 
@@ -465,10 +458,7 @@ where
             Some(Message::NegotiateProtocolVersion(_)) => {}
             Some(Message::ReadyForQuery(_)) => return Ok((process_id, secret_key, parameters)),
             Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
-            Some(_other) => {
-                eprintln!("DEBUG unexpected message in post-auth: ");
-                return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED at {}:{}", file!(), line!()); e });
-            }
+            Some(_) => return Err(Error::unexpected_message()),
             None => return Err(Error::closed()),
         }
     }

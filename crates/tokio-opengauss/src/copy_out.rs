@@ -23,12 +23,12 @@ async fn start(client: &InnerClient, buf: Bytes) -> Result<Responses, Error> {
 
     match responses.next().await? {
         Message::BindComplete => {}
-        _ => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./copy_out.rs"); e }),
+        _ => return Err(Error::unexpected_message()),
     }
 
     match responses.next().await? {
         Message::CopyOutResponse(_) => {}
-        _ => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./copy_out.rs"); e }),
+        _ => return Err(Error::unexpected_message()),
     }
 
     Ok(responses)
@@ -51,7 +51,7 @@ impl Stream for CopyOutStream {
         match ready!(this.responses.poll_next(cx)?) {
             Message::CopyData(body) => Poll::Ready(Some(Ok(body.into_bytes()))),
             Message::CopyDone => Poll::Ready(None),
-            _ => Poll::Ready(Some(Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./copy_out.rs"); e }))),
+            _ => Poll::Ready(Some(Err(Error::unexpected_message()))),
         }
     }
 }

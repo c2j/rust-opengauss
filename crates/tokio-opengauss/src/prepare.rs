@@ -69,18 +69,18 @@ pub async fn prepare(
 
     match responses.next().await? {
         Message::ParseComplete => {}
-        _ => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./prepare.rs"); e }),
+        _ => return Err(Error::unexpected_message()),
     }
 
     let parameter_description = match responses.next().await? {
         Message::ParameterDescription(body) => body,
-        _ => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./prepare.rs"); e }),
+        _ => return Err(Error::unexpected_message()),
     };
 
     let row_description = match responses.next().await? {
         Message::RowDescription(body) => Some(body),
         Message::NoData => None,
-        _ => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./prepare.rs"); e }),
+        _ => return Err(Error::unexpected_message()),
     };
 
     let mut parameters = vec![];
@@ -147,7 +147,7 @@ pub(crate) async fn get_type(client: &Arc<InnerClient>, oid: Oid) -> Result<Type
 
     let row = match rows.try_next().await? {
         Some(row) => row,
-        None => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./prepare.rs"); e }),
+        None => return Err(Error::unexpected_message()),
     };
 
     let name: String = row.try_get(0)?;

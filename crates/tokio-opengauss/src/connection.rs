@@ -139,7 +139,7 @@ where
                 Some(response) => response,
                 None => match messages.next().map_err(Error::parse)? {
                     Some(Message::ErrorResponse(error)) => return Err(Error::db(error)),
-                    _ => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./connection.rs"); e }),
+                    _ => return Err(Error::unexpected_message()),
                 },
             };
 

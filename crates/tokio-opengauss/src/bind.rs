@@ -31,7 +31,7 @@ where
 
     match responses.next().await? {
         Message::BindComplete => {}
-        _ => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./bind.rs"); e }),
+        _ => return Err(Error::unexpected_message()),
     }
 
     Ok(Portal::new(client, name, statement))

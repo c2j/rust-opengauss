@@ -115,7 +115,7 @@ where
                     rows_affected: None,
                 });
             }
-            _ => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./query.rs"); e }),
+            _ => return Err(Error::unexpected_message()),
         }
     }
 }
@@ -166,7 +166,7 @@ where
             Message::EmptyQueryResponse => rows = 0,
             Message::ReadyForQuery(_) => return Ok(rows),
             _ => {
-                return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./query.rs"); e });
+                return Err(Error::unexpected_message());
             }
         }
     }
@@ -237,7 +237,7 @@ where
             }
             Message::EmptyQueryResponse => rows = 0,
             Message::ReadyForQuery(_) => return Ok(rows),
-            _ => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./query.rs"); e }),
+            _ => return Err(Error::unexpected_message()),
         }
     }
 }
@@ -247,7 +247,7 @@ async fn start(client: &InnerClient, buf: Bytes) -> Result<Responses, Error> {
 
     match responses.next().await? {
         Message::BindComplete => {}
-        _ => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./query.rs"); e }),
+        _ => return Err(Error::unexpected_message()),
     }
 
     Ok(responses)
@@ -356,7 +356,7 @@ impl Stream for RowStream {
                 }
                 Message::EmptyQueryResponse | Message::PortalSuspended => {}
                 Message::ReadyForQuery(_) => return Poll::Ready(None),
-                _ => return Poll::Ready(Some(Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./query.rs"); e }))),
+                _ => return Poll::Ready(Some(Err(Error::unexpected_message()))),
             }
         }
     }
@@ -377,6 +377,6 @@ pub async fn sync(client: &InnerClient) -> Result<(), Error> {
 
     match responses.next().await? {
         Message::ReadyForQuery(_) => Ok(()),
-        _ => Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./query.rs"); e }),
+        _ => Err(Error::unexpected_message()),
     }
 }

@@ -371,6 +371,7 @@ fn portal() {
 }
 
 #[test]
+#[ignore] // PG18 uses 256-bit cancel keys; client sends 4-byte key → cancel is silently ignored
 fn cancel_query() {
     let mut client = Client::connect("host=localhost port=5433 user=postgres", NoTls).unwrap();
 

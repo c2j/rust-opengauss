@@ -114,7 +114,7 @@ where
                             let rows = extract_row_affected(&body)?;
                             return Poll::Ready(Ok(rows));
                         }
-                        _ => return Poll::Ready(Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./copy_in.rs"); e })),
+                        _ => return Poll::Ready(Err(Error::unexpected_message())),
                     }
                 }
             }
@@ -207,12 +207,12 @@ where
 
     match responses.next().await? {
         Message::BindComplete => {}
-        _ => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./copy_in.rs"); e }),
+        _ => return Err(Error::unexpected_message()),
     }
 
     match responses.next().await? {
         Message::CopyInResponse(_) => {}
-        _ => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./copy_in.rs"); e }),
+        _ => return Err(Error::unexpected_message()),
     }
 
     Ok(CopyInSink {
