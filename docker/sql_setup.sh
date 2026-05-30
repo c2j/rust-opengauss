@@ -89,6 +89,7 @@ local   all             postgres                             trust
 EOCONF
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" <<-EOSQL
+    SET password_encryption TO 'md5';
     CREATE ROLE pass_user PASSWORD 'password' LOGIN;
     CREATE ROLE md5_user PASSWORD 'password' LOGIN;
     SET password_encryption TO 'scram-sha-256';
