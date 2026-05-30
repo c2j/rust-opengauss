@@ -166,7 +166,14 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
     T: TlsStream + Unpin,
 {
-    match stream.try_next().await.map_err(Error::io)? {
+    let first = loop {
+        match stream.try_next().await.map_err(Error::io)? {
+            Some(Message::NegotiateProtocolVersion(_)) => continue,
+            other => break other,
+        }
+    };
+
+    match first {
         Some(Message::AuthenticationOk) => {
             can_skip_channel_binding(config)?;
             return Ok(());
