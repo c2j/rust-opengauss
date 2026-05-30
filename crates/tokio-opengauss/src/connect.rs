@@ -207,7 +207,7 @@ where
                     }
                 }
                 Some(_) => {}
-                None => return Err(Error::unexpected_message()),
+                None => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./connect.rs"); e }),
             }
         }
     }

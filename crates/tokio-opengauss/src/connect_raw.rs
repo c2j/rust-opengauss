@@ -283,7 +283,7 @@ where
             ));
         }
         Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
-        Some(_) => return Err(Error::unexpected_message()),
+        Some(_) => return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./connect_raw.rs"); e }),
         None => return Err(Error::closed()),
     }
 
@@ -292,7 +292,7 @@ where
         Some(Message::ErrorResponse(body)) => Err(Error::db(body)),
         Some(_other) => {
             eprintln!("DEBUG unexpected message in auth-ok: ");
-            Err(Error::unexpected_message())
+            Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./connect_raw.rs"); e })
         }
         None => Err(Error::closed()),
     }
@@ -388,8 +388,8 @@ where
         Some(Message::AuthenticationSaslContinue(body)) => body,
         Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
         Some(_other) => {
-            eprintln!("DEBUG unexpected message in authenticate");
-            return Err(Error::unexpected_message());
+            
+            return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./connect_raw.rs"); e });
         }
         None => return Err(Error::closed()),
     };
@@ -410,7 +410,7 @@ where
         Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
         Some(_other) => {
             eprintln!("DEBUG unexpected message in sasl-final: ");
-            return Err(Error::unexpected_message());
+            return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./connect_raw.rs"); e });
         }
         None => return Err(Error::closed()),
     };
@@ -460,7 +460,7 @@ where
             Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
             Some(_other) => {
                 eprintln!("DEBUG unexpected message in post-auth: ");
-                return Err(Error::unexpected_message());
+                return Err({ let e = Error::unexpected_message(); eprintln!("UNEXPECTED in ./connect_raw.rs"); e });
             }
             None => return Err(Error::closed()),
         }
