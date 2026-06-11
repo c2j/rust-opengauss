@@ -8,9 +8,10 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio_opengauss::Row;
 use tracing::{debug, error, info};
 
+use crate::connection;
+use crate::output;
 use crate::queries;
 
 fn sqlstate_to_sqlcode(state: &str) -> i32 {
@@ -402,46 +403,6 @@ pub struct GaussdbMcp {
     on_connected: HashMap<String, CallbackFn>,
 }
 
-fn needs_tls(url: &str) -> bool {
-    url.split_whitespace().any(|part| {
-        if let Some(val) = part.strip_prefix("sslmode=") {
-            matches!(val, "require" | "verify-ca" | "verify-full")
-        } else {
-            false
-        }
-    })
-}
-
-async fn do_connect(
-    url: &str,
-) -> Result<
-    (Arc<tokio_opengauss::Client>, tokio::task::JoinHandle<()>),
-    Box<dyn std::error::Error + Send + Sync>,
-> {
-    if needs_tls(url) {
-        let connector = native_tls::TlsConnector::builder()
-            .danger_accept_invalid_certs(true)
-            .danger_accept_invalid_hostnames(true)
-            .build()?;
-        let tls = opengauss_native_tls::MakeTlsConnector::new(connector);
-        let (client, connection) = tokio_opengauss::connect(url, tls).await?;
-        let handle = tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                error!("database connection lost: {}", e);
-            }
-        });
-        Ok((Arc::new(client), handle))
-    } else {
-        let (client, connection) = tokio_opengauss::connect(url, tokio_opengauss::NoTls).await?;
-        let handle = tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                error!("database connection lost: {}", e);
-            }
-        });
-        Ok((Arc::new(client), handle))
-    }
-}
-
 impl GaussdbMcp {
     /// Create a multi-connection server with eager (pre-resolved) URLs.
     pub fn new_multi_disconnected(entries: Vec<(String, String)>, default_name: String) -> Self {
@@ -522,7 +483,7 @@ impl GaussdbMcp {
         };
 
         info!("probing database connection '{}' at startup", name);
-        let result = do_connect(&url).await;
+        let result = connection::do_connect(&url).await;
 
         let mut conns = self.connections.lock().await;
         match result {
@@ -607,7 +568,7 @@ impl GaussdbMcp {
         name: String,
         url: String,
     ) -> Result<Arc<tokio_opengauss::Client>, McpError> {
-        let result = do_connect(&url).await;
+        let result = connection::do_connect(&url).await;
         let mut conns = self.connections.lock().await;
 
         match result {
@@ -826,7 +787,7 @@ impl GaussdbMcp {
         for row in &rows {
             let mut result_row: Vec<serde_json::Value> = Vec::new();
             for idx in 0..row.len() {
-                result_row.push(format_row_value(row, idx));
+                result_row.push(output::format_row_value(row, idx));
             }
             result_rows.push(result_row);
         }
@@ -936,32 +897,4 @@ impl GaussdbMcp {
 )]
 impl ServerHandler for GaussdbMcp {}
 
-fn format_row_value(row: &Row, idx: usize) -> serde_json::Value {
-    if let Ok(v) = row.try_get::<_, Option<&str>>(idx) {
-        return serde_json::Value::from(v.map(String::from));
-    }
-    if let Ok(v) = row.try_get::<_, Option<i32>>(idx) {
-        return serde_json::json!(v);
-    }
-    if let Ok(v) = row.try_get::<_, Option<i64>>(idx) {
-        return serde_json::json!(v);
-    }
-    if let Ok(v) = row.try_get::<_, Option<f64>>(idx) {
-        return serde_json::json!(v);
-    }
-    if let Ok(v) = row.try_get::<_, Option<bool>>(idx) {
-        return serde_json::json!(v);
-    }
-    if let Ok(v) = row.try_get::<_, Option<&[u8]>>(idx) {
-        return serde_json::json!(v.map(|b| format!("\\x{}", hex_bytes(b))));
-    }
-    serde_json::Value::Null
-}
 
-fn hex_bytes(bytes: &[u8]) -> String {
-    let mut result = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        result.push_str(&format!("{:02x}", b));
-    }
-    result
-}
