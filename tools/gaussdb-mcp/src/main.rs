@@ -15,9 +15,9 @@ use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use crate::config::{
-    PasswordSource, ResolvedConnection, LazyConnectionEntry, default_config_path,
-    resolve_all_connections, resolve_all_connections_lazy, store_keyring_password,
-    rewrite_password_to_sentinel, KEYRING_SERVICE,
+    KEYRING_SERVICE, LazyConnectionEntry, PasswordSource, ResolvedConnection, default_config_path,
+    resolve_all_connections, resolve_all_connections_lazy, rewrite_password_to_sentinel,
+    store_keyring_password,
 };
 use crate::server::{format_error_chain, redact_url};
 
@@ -178,11 +178,7 @@ fn handle_store_password(password: String, name: Option<String>, config_path: Op
     });
 
     let config: config::MultiConfig = toml::from_str(&content).unwrap_or_else(|e| {
-        eprintln!(
-            "error: failed to parse {}: {}",
-            config_path.display(),
-            e
-        );
+        eprintln!("error: failed to parse {}: {}", config_path.display(), e);
         std::process::exit(1);
     });
 
@@ -192,14 +188,17 @@ fn handle_store_password(password: String, name: Option<String>, config_path: Op
     });
 
     let target = if let Some(ref name) = name {
-        connections.iter().find(|c| c.name == *name).unwrap_or_else(|| {
-            eprintln!("error: connection '{}' not found in config", name);
-            eprintln!(
-                "  available: {:?}",
-                connections.iter().map(|c| &c.name).collect::<Vec<_>>()
-            );
-            std::process::exit(1);
-        })
+        connections
+            .iter()
+            .find(|c| c.name == *name)
+            .unwrap_or_else(|| {
+                eprintln!("error: connection '{}' not found in config", name);
+                eprintln!(
+                    "  available: {:?}",
+                    connections.iter().map(|c| &c.name).collect::<Vec<_>>()
+                );
+                std::process::exit(1);
+            })
     } else {
         connections.first().unwrap_or_else(|| {
             eprintln!("error: no connections defined in config");
@@ -240,7 +239,10 @@ fn parse_host_port_from_url(url: &str) -> Option<(String, u16)> {
     }
 }
 
-async fn query_verbose_details(client: &tokio_opengauss::Client, elapsed: Duration) -> VerboseDetails {
+async fn query_verbose_details(
+    client: &tokio_opengauss::Client,
+    elapsed: Duration,
+) -> VerboseDetails {
     async fn query_scalar(client: &tokio_opengauss::Client, sql: &str) -> Option<String> {
         match client.query_one(sql, &[]).await {
             Ok(row) => row
@@ -858,8 +860,8 @@ async fn handle_check_connection_cmd(
 async fn run_mcp_server(config_path: Option<String>) {
     let config_path_buf = config_path.map(PathBuf::from);
 
-    let (lazy_entries, default_name) =
-        resolve_all_connections_lazy(config_path_buf).unwrap_or_else(|e| {
+    let (lazy_entries, default_name) = resolve_all_connections_lazy(config_path_buf)
+        .unwrap_or_else(|e| {
             eprintln!("error: {}", e);
             std::process::exit(1);
         });

@@ -41,8 +41,7 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
     let sql = if let Some(s) = &args.sql {
         s.clone()
     } else if let Some(f) = &args.file {
-        std::fs::read_to_string(f)
-            .map_err(|e| format!("Failed to read file '{}': {}", f, e))?
+        std::fs::read_to_string(f).map_err(|e| format!("Failed to read file '{}': {}", f, e))?
     } else {
         let mut input = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)
@@ -53,9 +52,7 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
 
     let sql = sql.trim().to_string();
     if sql.is_empty() {
-        return Err(
-            "No SQL provided. Use -c/--sql, -f/--file, or pipe SQL to stdin.".to_string(),
-        );
+        return Err("No SQL provided. Use -c/--sql, -f/--file, or pipe SQL to stdin.".to_string());
     }
 
     // 2. Load config
@@ -84,8 +81,7 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
     let trimmed = sql.trim();
     let upper = trimmed.to_uppercase();
 
-    if upper.starts_with("SELECT") || upper.starts_with("EXPLAIN") || upper.starts_with("WITH")
-    {
+    if upper.starts_with("SELECT") || upper.starts_with("EXPLAIN") || upper.starts_with("WITH") {
         let rows = client
             .query(trimmed, &[])
             .await
