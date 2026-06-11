@@ -896,5 +896,3 @@ impl GaussdbMcp {
     instructions = "MCP server for openGauss database introspection with multi-connection support"
 )]
 impl ServerHandler for GaussdbMcp {}
-
-
