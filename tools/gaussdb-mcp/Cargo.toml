@@ -7,10 +7,15 @@ description = "An MCP server for openGauss database introspection"
 rust-version = "1.85"
 
 [[bin]]
+name = "gaussdb"
+path = "src/main.rs"
+
+[[bin]]
 name = "gaussdb-mcp"
 path = "src/main.rs"
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 rmcp = { version = "1.5.0", features = ["server", "macros", "transport-io"] }
 tokio = { version = "1", features = ["full"] }
 tokio-opengauss = { version = "0.7.17", path = "../../crates/tokio-opengauss" }
