@@ -1,6 +1,6 @@
 [package]
 name = "gaussdb-mcp"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "An MCP server for openGauss database introspection"
@@ -8,10 +8,6 @@ rust-version = "1.85"
 
 [[bin]]
 name = "gaussdb"
-path = "src/main.rs"
-
-[[bin]]
-name = "gaussdb-mcp"
 path = "src/main.rs"
 
 [dependencies]
