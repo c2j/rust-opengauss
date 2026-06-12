@@ -1,0 +1,398 @@
+# gaussdb-mcp
+
+一个独立的 MCP (Model Context Protocol) 服务器，用于 [openGauss](https://opengauss.org/) 数据库内省，同时内置 CLI 模式支持直接 SQL 执行。专为 Claude、Cursor 等 AI 助手及其它 MCP 兼容工具设计。
+
+基于 openGauss/PostgreSQL 线协议 (v3.0+) 构建，**零 FFI 依赖** — 无需 libpq，无需 C 库。
+
+## 特性
+
+- **MCP 服务器** — 通过 MCP 协议提供 6 个数据库内省工具
+- **CLI 模式** — 从终端直接执行 SQL，支持 `--sql`、`--file` 和标准输入
+- **多连接支持** — 在单个 TOML 文件中配置多个命名数据库连接，按工具调用切换
+- **操作系统密钥链密码** — 通过 macOS 钥匙串 / Windows 凭据管理器 / Linux Secret Service 安全管理密码
+- **密码自动迁移** — 首次连接成功时，明文密码自动迁移至操作系统密钥链
+- **TLS 支持** — 通过 `sslmode` 参数自动检测 TLS 模式 (disable / require / verify-full)
+- **连接诊断** — `--check-connection` 测试全部 TLS 模式，提供详细的服务器信息、TLS 证书详情和 GUC 配置
+- **丰富的错误报告** — SQLSTATE、SQLCODE、严重等级、详细信息、提示、模式、表、列上下文
+- **文件日志** — 每日滚动日志，不干扰 stdio MCP 传输
+- **openGauss 认证** — 支持 SHA256、MD5+SHA256、SM3、SCRAM-SHA-256 和 MD5 认证
+
+## 快速开始
+
+### 安装
+
+```sh
+# 从源码构建 (需要 Rust 1.85+)
+cargo build -p gaussdb-mcp --release
+
+# 二进制文件名为 gaussdb 或 gaussdb-mcp
+./target/release/gaussdb-mcp --help
+```
+
+### 通过环境变量连接
+
+```sh
+export GAUSSDB_URL="host=127.0.0.1 user=gaussdb password=secret dbname=postgres"
+gaussdb-mcp
+```
+
+### 使用配置文件
+
+```sh
+cat > ~/.gaussdb-mcp.toml << 'EOF'
+host = "127.0.0.1"
+port = 5432
+user = "gaussdb"
+password = "secret"
+dbname = "postgres"
+EOF
+gaussdb-mcp
+```
+
+### 快速 CLI 查询
+
+```sh
+# 执行 SELECT 查询
+gaussdb-mcp cli --sql "SELECT version()"
+
+# 从文件执行 SQL
+gaussdb-mcp cli --file query.sql
+
+# 通过管道输入 SQL
+echo "SELECT count(*) FROM users" | gaussdb-mcp cli
+```
+
+## 使用模式
+
+### 模式一：MCP 服务器（默认）
+
+```sh
+gaussdb-mcp                    # 默认 MCP 模式，stdio 传输
+gaussdb-mcp mcp                # 显式指定 MCP 模式
+gaussdb-mcp mcp --config ./prod.toml  # 使用自定义配置
+```
+
+与 AI 助手集成（参见[与 AI 助手集成](#与-ai-助手集成)）。
+
+### 模式二：CLI 模式
+
+```sh
+gaussdb-mcp cli [OPTIONS]
+
+OPTIONS:
+    -s, --sql <SQL>         SQL 语句
+    -f, --file <FILE>       从文件读取 SQL
+        --config <PATH>     配置文件路径
+        --connection <NAME> 目标连接名称
+        --format <FMT>      输出格式: table, json, vertical [默认: table]
+```
+
+**示例：**
+
+```sh
+# 表格输出（默认）
+gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 5"
+
+# JSON 输出
+gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 5" --format json
+
+# 垂直显示（类似 psql 的 \x）
+gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 5" --format vertical
+
+# 支持 DML/DDL 语句
+gaussdb-mcp cli --sql "INSERT INTO logs VALUES (1, 'hello')"
+gaussdb-mcp cli --sql "CREATE TABLE test (id int)"
+
+# 指定连接
+gaussdb-mcp cli --connection prod --sql "SELECT count(*) FROM orders"
+```
+
+## 配置
+
+### 单连接（向后兼容）
+
+```toml
+host = "127.0.0.1"
+port = 5432
+user = "gaussdb"
+password = "secret"
+dbname = "postgres"
+```
+
+### 多命名连接
+
+```toml
+default_connection = "dev"
+
+[[connections]]
+name = "dev"
+host = "127.0.0.1"
+port = 5432
+user = "gaussdb"
+password = "secret"
+dbname = "devdb"
+
+[[connections]]
+name = "prod"
+host = "192.168.1.10"
+port = 5432
+user = "admin"
+password = "keyring"         # 存储在操作系统密钥链中
+dbname = "production"
+
+[[connections]]
+name = "staging"
+url = "host=10.0.0.5 user=admin password=keyring dbname=staging sslmode=require"
+```
+
+当存在 `[[connections]]` 时，顶层的 `host`、`user` 等字段将被忽略。当不存在时，这些字段将包装为单个 `"default"` 连接 — 完全向后兼容。
+
+`default_connection` 指定在工具未提供 `connection_name` 时使用的默认连接，默认为第一个连接。
+
+每个连接的密码可以是：
+- 明文字符串 — 首次成功连接时自动迁移至操作系统密钥链
+- `"keyring"` — 从操作系统密钥链读取（使用 `--store-password` 设置）
+
+## CLI 选项
+
+```
+gaussdb-mcp [OPTIONS] [COMMAND]
+
+COMMANDS:
+    mcp     作为 MCP 服务器运行（默认）
+    cli     从命令行执行 SQL
+
+MCP 选项:
+    --config <PATH>           配置文件路径 (默认: ~/.gaussdb-mcp.toml)
+    --check-connection [NAME] 测试数据库连接并退出
+    -v, --verbose             显示详细连接信息
+    --store-password <PASS>   将密码存储到操作系统密钥链
+    --name <NAME>             目标连接名称 (配合 --store-password)
+
+CLI 选项:
+    -s, --sql <SQL>            要执行的 SQL 语句
+    -f, --file <FILE>          从文件读取 SQL (或管道传入 stdin)
+    --config <PATH>            配置文件路径
+    --connection <NAME>        目标连接名称
+    --format <FMT>             输出格式: table, json, vertical [默认: table]
+```
+
+### 连接诊断
+
+```sh
+# 检查默认连接 (三阶段: NoTls → TLS-skip → TLS-verify)
+gaussdb-mcp --check-connection
+
+# 检查特定命名连接
+gaussdb-mcp --check-connection prod --config ~/.gaussdb-mcp.toml
+
+# 详细输出 (版本、GUC 参数、TLS 证书详情、耗时)
+gaussdb-mcp --check-connection --verbose
+```
+
+诊断工具会：
+1. 尝试纯 TCP (NoTls)
+2. 尝试 TLS（跳过证书验证）
+3. 尝试 TLS（完整证书验证）
+4. 报告密钥链状态（可用、空或不可用）
+5. 详细模式下：服务器版本、协议版本、GUC 配置、TLS 证书链和耗时
+
+### 密码管理
+
+```sh
+# 为第一个/默认连接存储密码
+gaussdb-mcp --store-password 'MyP@ss123' --config ~/.gaussdb-mcp.toml
+
+# 为命名连接存储密码
+gaussdb-mcp --store-password 'Pr0dP@ss' --name prod --config ~/.gaussdb-mcp.toml
+
+# 首次成功 MCP 连接时，配置文件中的明文密码会自动迁移
+# 至操作系统密钥链，配置文件更新为 password = "keyring"
+```
+
+## MCP 工具参考
+
+| 工具 | 描述 |
+|------|-------------|
+| `list_connections` | 列出所有配置的连接及其状态（connected/connecting/pending/unavailable） |
+| `get_database_info` | 服务器版本、编码、排序规则、启动时间、当前用户、服务器地址 |
+| `list_tables` | 所有用户表和视图，包含模式、类型、大小和注释 |
+| `get_table_metadata` | 列（名称、类型、可空、默认值、注释）、主键和索引 |
+| `execute_query` | 执行只读 SELECT 或 EXPLAIN 查询 |
+| `get_execution_plan` | EXPLAIN 或 EXPLAIN ANALYZE，支持 TEXT/JSON/YAML/XML 格式 |
+
+所有工具都接受可选的 `connection_name` 参数以指定目标数据库。不提供时使用 `default_connection`。
+
+### 工具参数
+
+**`list_connections`** — 无参数。返回连接列表，包含状态和默认指示器。
+
+**`get_database_info`**
+| 参数 | 类型 | 必填 | 描述 |
+|-----------|------|----------|-------------|
+| `connection_name` | string | 否 | 目标连接名称 |
+
+**`list_tables`**
+| 参数 | 类型 | 必填 | 描述 |
+|-----------|------|----------|-------------|
+| `connection_name` | string | 否 | 目标连接名称 |
+
+**`get_table_metadata`**
+| 参数 | 类型 | 必填 | 描述 |
+|-----------|------|----------|-------------|
+| `table_name` | string | 是 | 表名 |
+| `schema_name` | string | 否 | 模式名称 (默认: public) |
+| `connection_name` | string | 否 | 目标连接名称 |
+
+**`execute_query`**
+| 参数 | 类型 | 必填 | 描述 |
+|-----------|------|----------|-------------|
+| `sql` | string | 是 | SQL 查询 (仅限 SELECT 或 EXPLAIN) |
+| `connection_name` | string | 否 | 目标连接名称 |
+
+**`get_execution_plan`**
+| 参数 | 类型 | 必填 | 描述 |
+|-----------|------|----------|-------------|
+| `sql` | string | 是 | 要解释的 SQL 查询 |
+| `analyze` | boolean | 否 | 运行 EXPLAIN ANALYZE (默认: false) |
+| `format` | string | 否 | 输出格式: TEXT, JSON, YAML, XML (默认: TEXT) |
+| `connection_name` | string | 否 | 目标连接名称 |
+
+### 错误响应格式
+
+当数据库发生错误时，MCP 工具返回结构化的错误数据：
+
+```json
+{
+  "sqlstate": "42P01",
+  "sqlcode": -204,
+  "severity": "ERROR",
+  "message": "relation \"users\" does not exist",
+  "detail": null,
+  "hint": null,
+  "schema": null,
+  "table": null,
+  "column": null,
+  "constraint": null,
+  "position": null,
+  "sql": "SELECT * FROM users"
+}
+```
+
+## 与 AI 助手集成
+
+### Claude Desktop
+
+在 `claude_desktop_config.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "gaussdb": {
+      "command": "/path/to/gaussdb-mcp",
+      "env": {
+        "GAUSSDB_URL": "host=127.0.0.1 user=gaussdb password=secret dbname=postgres"
+      }
+    }
+  }
+}
+```
+
+### Cursor
+
+在 `.cursor/mcp.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "gaussdb": {
+      "command": "/path/to/gaussdb-mcp",
+      "env": {
+        "GAUSSDB_URL": "host=127.0.0.1 user=gaussdb password=secret dbname=postgres"
+      }
+    }
+  }
+}
+```
+
+### 多连接设置
+
+```json
+{
+  "mcpServers": {
+    "gaussdb": {
+      "command": "/path/to/gaussdb-mcp",
+      "args": ["mcp", "--config", "/path/to/gaussdb-mcp.toml"]
+    }
+  }
+}
+```
+
+## TLS 支持
+
+连接 URL 或配置文件中的 `sslmode=` 参数：
+
+```sh
+# 禁用 TLS (默认)
+GAUSSDB_URL="host=127.0.0.1 user=gaussdb dbname=postgres sslmode=disable"
+
+# 要求 TLS，跳过证书验证
+GAUSSDB_URL="host=127.0.0.1 user=gaussdb dbname=postgres sslmode=require"
+
+# 要求 TLS，完整证书验证
+GAUSSDB_URL="host=db.example.com user=gaussdb dbname=postgres sslmode=verify-full"
+```
+
+通过 `--check-connection` 进行 TLS 自动检测，测试全部三种模式。
+
+## 认证
+
+除标准 PostgreSQL 认证外，还支持 openGauss 特有的认证方法：
+
+| 方法 | 描述 |
+|--------|-------------|
+| SHA256 密码 | openGauss 基于 RFC 5802 的 SHA256 认证 |
+| MD5 + SHA256 | MD5/SHA256 组合认证 |
+| SM3 密码 | 中国国家标准 (SM3) |
+| SCRAM-SHA-256 | 标准 SCRAM 认证 |
+| MD5 密码 | 传统 MD5 认证 |
+| 明文密码 | 纯文本（建议配合 TLS 使用） |
+
+## 日志
+
+日志写入 `$XDG_DATA_HOME/gaussdb-mcp/gaussdb-mcp.log`（Linux 上为 `~/.local/share/gaussdb-mcp/`，macOS 上为 `~/Library/Application Support/gaussdb-mcp/`），每日滚动。这避免了对 stdio MCP 传输的干扰。
+
+通过 `RUST_LOG` 控制日志级别：
+
+```sh
+RUST_LOG=gaussdb_mcp=debug gaussdb-mcp
+```
+
+## 项目结构
+
+本仓库是一个 Rust 工作区，包含：
+
+- **`tools/gaussdb-mcp`** — MCP 服务器 + CLI 工具（本文档的重点）
+- **`crates/tokio-opengauss`** — 异步 openGauss/PostgreSQL 客户端
+- **`crates/opengauss`** — 同步 openGauss/PostgreSQL 客户端
+- **`crates/opengauss-derive`** — 类型派生的过程宏
+- **`crates/opengauss-protocol`** — 线协议 v3.0+ 实现
+- **`crates/opengauss-types`** — 类型系统及序列化
+- **`crates/opengauss-native-tls`** — tokio-opengauss 的 Native TLS 连接器
+- **`crates/opengauss-openssl`** — tokio-opengauss 的 OpenSSL TLS 连接器
+- **`tools/codegen`** — 从 PostgreSQL 目录数据生成代码
+
+详见 [docs/DeveloperGuide.md](docs/DeveloperGuide.md)（库使用）和 [CONTRIBUTION.md](CONTRIBUTION.md)（贡献指南）。
+
+## 文档
+
+| 文档 | English | 中文 |
+|----------|---------|------|
+| 用户手册 | [docs/UserGuide.md](docs/UserGuide.md) | [docs/UserGuide_zh.md](docs/UserGuide_zh.md) |
+| 开发者指南 | [docs/DeveloperGuide.md](docs/DeveloperGuide.md) | [docs/DeveloperGuide_zh.md](docs/DeveloperGuide_zh.md) |
+| 贡献指南 | [CONTRIBUTION.md](CONTRIBUTION.md) | [CONTRIBUTION_zh.md](CONTRIBUTION_zh.md) |
+| README | [README.md](README.md) | [README_zh.md](README_zh.md) |
+
+## 许可证
+
+您可以选择 [Apache License, Version 2.0](license/LICENSE-APACHE) 或 [MIT license](license/LICENSE-MIT) 任一许可证。
