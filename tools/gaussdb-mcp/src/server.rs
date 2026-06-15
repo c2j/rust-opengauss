@@ -393,7 +393,10 @@ type CallbackFn = Arc<dyn Fn() + Send + Sync>;
 enum ConnectionState {
     Pending(ResolveFn),
     Connecting(String),
-    Connected(Arc<tokio_opengauss::Client>),
+    Connected {
+        client: Arc<tokio_opengauss::Client>,
+        url: String,
+    },
     Unavailable(String),
 }
 
@@ -450,7 +453,10 @@ impl GaussdbMcp {
         let mut connections = HashMap::new();
         connections.insert(
             "default".to_string(),
-            ConnectionState::Connected(Arc::new(client)),
+            ConnectionState::Connected {
+                client: Arc::new(client),
+                url: String::new(),
+            },
         );
         Self {
             connections: Arc::new(Mutex::new(connections)),
@@ -492,7 +498,13 @@ impl GaussdbMcp {
                 if let Some(cb) = self.on_connected.get(&name) {
                     cb();
                 }
-                conns.insert(name, ConnectionState::Connected(client));
+                conns.insert(
+                    name,
+                    ConnectionState::Connected {
+                        client,
+                        url: url.clone(),
+                    },
+                );
             }
             Err(e) => {
                 let chain = format_error_chain(e.as_ref());
@@ -512,10 +524,24 @@ impl GaussdbMcp {
         connection_name: Option<&str>,
     ) -> Result<Arc<tokio_opengauss::Client>, McpError> {
         let name = connection_name.unwrap_or(&self.default_name).to_string();
-        let conns = self.connections.lock().await;
+        let mut conns = self.connections.lock().await;
 
         match conns.get(&name) {
-            Some(ConnectionState::Connected(client)) => Ok(Arc::clone(client)),
+            Some(ConnectionState::Connected { client, url }) => {
+                if !client.is_closed() {
+                    return Ok(Arc::clone(client));
+                }
+                // Connection is dead — downgrade to Connecting so other
+                // concurrent callers don't also race to reconnect.
+                info!(
+                    "connection '{}' is closed, downgrading to Connecting for reconnect",
+                    name
+                );
+                let url = url.clone();
+                conns.insert(name.clone(), ConnectionState::Connecting(url.clone()));
+                drop(conns);
+                self.connect_with_url(name, url).await
+            }
             Some(ConnectionState::Pending(resolver)) => {
                 let resolver = Arc::clone(resolver);
                 drop(conns);
@@ -577,7 +603,13 @@ impl GaussdbMcp {
                 if let Some(cb) = self.on_connected.get(&name) {
                     cb();
                 }
-                conns.insert(name, ConnectionState::Connected(Arc::clone(&client)));
+                conns.insert(
+                    name,
+                    ConnectionState::Connected {
+                        client: Arc::clone(&client),
+                        url: url.clone(),
+                    },
+                );
                 Ok(client)
             }
             Err(e) => {
@@ -586,6 +618,36 @@ impl GaussdbMcp {
                 Err(err)
             }
         }
+    }
+
+    /// Downgrade a Connected connection to Connecting after a query error,
+    /// so the next tool call will reconnect automatically.
+    async fn downgrade_on_error(&self, name: &str) {
+        let mut conns = self.connections.lock().await;
+        if let Some(ConnectionState::Connected { url, .. }) = conns.get(name) {
+            let url = url.clone();
+            info!(
+                "connection '{}' downgrading to Connecting after query error",
+                name
+            );
+            conns.insert(name.to_string(), ConnectionState::Connecting(url));
+        }
+    }
+
+    /// Handle a tokio_opengauss query error. If it is a connection-level
+    /// error (not a DB/SQL error), downgrade the state so the next call
+    /// reconnects, then return the MCP error.
+    async fn handle_query_error(
+        &self,
+        name: &str,
+        err: tokio_opengauss::Error,
+        tool: &str,
+        sql: &str,
+    ) -> McpError {
+        if err.as_db_error().is_none() {
+            self.downgrade_on_error(name).await;
+        }
+        query_error(tool, sql, &err)
     }
 }
 
@@ -600,13 +662,23 @@ impl GaussdbMcp {
             "tool called: get_database_info connection={}",
             params.connection_name.as_deref().unwrap_or("(default)")
         );
+        let name = params
+            .connection_name
+            .as_deref()
+            .unwrap_or(&self.default_name)
+            .to_string();
         let client = self
             .get_client_for(params.connection_name.as_deref())
             .await?;
-        let row = client
-            .query_one(queries::DATABASE_INFO, &[])
-            .await
-            .map_err(|e| query_error("get_database_info", queries::DATABASE_INFO, &e))?;
+        let row = match client.query_one(queries::DATABASE_INFO, &[]).await {
+            Ok(row) => row,
+            Err(e) => {
+                return Err(
+                    self.handle_query_error(&name, e, "get_database_info", queries::DATABASE_INFO)
+                        .await,
+                );
+            }
+        };
 
         let result = json!({
             "version": row.get::<_, Option<&str>>(0),
@@ -634,13 +706,23 @@ impl GaussdbMcp {
             "tool called: list_tables connection={}",
             params.connection_name.as_deref().unwrap_or("(default)")
         );
+        let name = params
+            .connection_name
+            .as_deref()
+            .unwrap_or(&self.default_name)
+            .to_string();
         let client = self
             .get_client_for(params.connection_name.as_deref())
             .await?;
-        let rows = client
-            .query(queries::LIST_TABLES, &[])
-            .await
-            .map_err(|e| query_error("list_tables", queries::LIST_TABLES, &e))?;
+        let rows = match client.query(queries::LIST_TABLES, &[]).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                return Err(
+                    self.handle_query_error(&name, e, "list_tables", queries::LIST_TABLES)
+                        .await,
+                );
+            }
+        };
 
         let tables: Vec<serde_json::Value> = rows
             .iter()
@@ -667,6 +749,11 @@ impl GaussdbMcp {
     ) -> Result<CallToolResult, McpError> {
         let schema = params.schema_name.as_deref().unwrap_or("public");
         let table = &params.table_name;
+        let name = params
+            .connection_name
+            .as_deref()
+            .unwrap_or(&self.default_name)
+            .to_string();
         info!(
             "tool called: get_table_metadata schema={} table={} connection={}",
             schema,
@@ -677,10 +764,22 @@ impl GaussdbMcp {
             .get_client_for(params.connection_name.as_deref())
             .await?;
 
-        let columns_rows = client
+        let columns_rows = match client
             .query(queries::TABLE_COLUMNS, &[&schema, &table.as_str()])
             .await
-            .map_err(|e| query_error("get_table_metadata (columns)", queries::TABLE_COLUMNS, &e))?;
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                return Err(self
+                    .handle_query_error(
+                        &name,
+                        e,
+                        "get_table_metadata (columns)",
+                        queries::TABLE_COLUMNS,
+                    )
+                    .await);
+            }
+        };
 
         let columns: Vec<serde_json::Value> = columns_rows
             .iter()
@@ -696,26 +795,44 @@ impl GaussdbMcp {
             })
             .collect();
 
-        let pk_rows = client
+        let pk_rows = match client
             .query(queries::TABLE_PRIMARY_KEYS, &[&schema, &table.as_str()])
             .await
-            .map_err(|e| {
-                query_error(
-                    "get_table_metadata (primary_keys)",
-                    queries::TABLE_PRIMARY_KEYS,
-                    &e,
-                )
-            })?;
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                return Err(self
+                    .handle_query_error(
+                        &name,
+                        e,
+                        "get_table_metadata (primary_keys)",
+                        queries::TABLE_PRIMARY_KEYS,
+                    )
+                    .await);
+            }
+        };
 
         let primary_keys: Vec<String> = pk_rows
             .iter()
             .filter_map(|row| row.get::<_, Option<&str>>(0).map(String::from))
             .collect();
 
-        let idx_rows = client
+        let idx_rows = match client
             .query(queries::TABLE_INDEXES, &[&schema, &table.as_str()])
             .await
-            .map_err(|e| query_error("get_table_metadata (indexes)", queries::TABLE_INDEXES, &e))?;
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                return Err(self
+                    .handle_query_error(
+                        &name,
+                        e,
+                        "get_table_metadata (indexes)",
+                        queries::TABLE_INDEXES,
+                    )
+                    .await);
+            }
+        };
 
         let indexes: Vec<serde_json::Value> = idx_rows
             .iter()
@@ -747,6 +864,11 @@ impl GaussdbMcp {
     ) -> Result<CallToolResult, McpError> {
         let trimmed = params.sql.trim();
         let upper = trimmed.to_uppercase();
+        let name = params
+            .connection_name
+            .as_deref()
+            .unwrap_or(&self.default_name)
+            .to_string();
         debug!(
             "tool called: execute_query sql_len={} connection={}",
             trimmed.len(),
@@ -766,10 +888,15 @@ impl GaussdbMcp {
             ));
         }
 
-        let rows = client
-            .query(trimmed, &[])
-            .await
-            .map_err(|e| query_error("execute_query", trimmed, &e))?;
+        let rows = match client.query(trimmed, &[]).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                return Err(
+                    self.handle_query_error(&name, e, "execute_query", trimmed)
+                        .await,
+                );
+            }
+        };
 
         if rows.is_empty() {
             return Ok(CallToolResult::success(vec![Content::text(
@@ -810,6 +937,11 @@ impl GaussdbMcp {
     ) -> Result<CallToolResult, McpError> {
         let analyze = params.analyze.unwrap_or(false);
         let format = params.format.as_deref().unwrap_or("TEXT").to_uppercase();
+        let name = params
+            .connection_name
+            .as_deref()
+            .unwrap_or(&self.default_name)
+            .to_string();
         info!(
             "tool called: get_execution_plan analyze={} format={} connection={}",
             analyze,
@@ -829,10 +961,15 @@ impl GaussdbMcp {
             format!("EXPLAIN (FORMAT {}) {}", format, params.sql)
         };
 
-        let rows = client
-            .query(&explain_sql, &[])
-            .await
-            .map_err(|e| query_error("get_execution_plan", &explain_sql, &e))?;
+        let rows = match client.query(&explain_sql, &[]).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                return Err(
+                    self.handle_query_error(&name, e, "get_execution_plan", &explain_sql)
+                        .await,
+                );
+            }
+        };
 
         let plan = if format == "JSON" {
             if let Some(row) = rows.first() {
@@ -866,7 +1003,7 @@ impl GaussdbMcp {
             .iter()
             .map(|(name, state)| {
                 let status = match state {
-                    ConnectionState::Connected(_) => "connected",
+                    ConnectionState::Connected { .. } => "connected",
                     ConnectionState::Connecting(_) => "connecting",
                     ConnectionState::Pending(_) => "pending",
                     ConnectionState::Unavailable(_) => "unavailable",
@@ -892,7 +1029,7 @@ impl GaussdbMcp {
 
 #[tool_handler(
     name = "gaussdb-mcp",
-    version = "0.2.3",
+    version = "0.2.5",
     instructions = "MCP server for openGauss database introspection with multi-connection support"
 )]
 impl ServerHandler for GaussdbMcp {}
