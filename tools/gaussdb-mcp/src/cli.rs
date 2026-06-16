@@ -4,7 +4,27 @@ use std::str::FromStr;
 use crate::config::resolve_all_connections;
 use crate::connection::do_connect;
 use crate::output::{format_row_value, format_table};
-use crate::server::format_error_chain;
+use crate::server::{format_error_chain, sqlstate_to_sqlcode};
+
+fn format_sql_error(err: &tokio_opengauss::Error) -> String {
+    if let Some(db_err) = err.as_db_error() {
+        let sqlstate = db_err.code().code();
+        let sqlcode = sqlstate_to_sqlcode(sqlstate);
+        let mut msg = format!(
+            "[SQLSTATE {} | SQLCODE {}] {}",
+            sqlstate, sqlcode, db_err.message()
+        );
+        if let Some(detail) = db_err.detail() {
+            msg.push_str(&format!("\nDETAIL: {}", detail));
+        }
+        if let Some(hint) = db_err.hint() {
+            msg.push_str(&format!("\nHINT: {}", hint));
+        }
+        msg
+    } else {
+        format_error_chain(err)
+    }
+}
 
 pub(crate) enum OutputFormat {
     Table,
@@ -85,7 +105,7 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
         let rows = client
             .query(trimmed, &[])
             .await
-            .map_err(|e| format!("Query failed: {}", e))?;
+            .map_err(|e| format!("Query failed: {}", format_sql_error(&e)))?;
 
         if rows.is_empty() {
             println!("(0 rows)");
@@ -150,7 +170,7 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
         let rows_affected = client
             .execute(trimmed, &[])
             .await
-            .map_err(|e| format!("Execute failed: {}", e))?;
+            .map_err(|e| format!("Execute failed: {}", format_sql_error(&e)))?;
         println!("{}", rows_affected);
     }
 
