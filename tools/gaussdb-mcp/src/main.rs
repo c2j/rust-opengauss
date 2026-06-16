@@ -24,8 +24,7 @@ use crate::server::{format_error_chain, redact_url};
 // ─── Configuration ─────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
-#[command(name = "gaussdb")]
-#[command(version)]
+#[command(name = "gaussdb", version, about = concat!("openGauss MCP server and CLI tool — v", env!("CARGO_PKG_VERSION")))]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
