@@ -14,7 +14,7 @@ use crate::connection;
 use crate::output;
 use crate::queries;
 
-fn sqlstate_to_sqlcode(state: &str) -> i32 {
+pub(crate) fn sqlstate_to_sqlcode(state: &str) -> i32 {
     match state {
         "00000" => 0,
         "01000" => 100,
