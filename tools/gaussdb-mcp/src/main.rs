@@ -78,6 +78,18 @@ enum Commands {
         /// Output format: table, json, vertical
         #[arg(long, default_value = "table")]
         format: String,
+
+        /// Statement timeout (e.g. "30s", "5min"). Overrides config.
+        #[arg(long)]
+        statement_timeout: Option<String>,
+
+        /// Connection max lifetime before reconnect (e.g. "10min").
+        #[arg(long)]
+        connection_max_lifetime: Option<String>,
+
+        /// Action on timeout: "cancel" or "disconnect". Default: cancel.
+        #[arg(long)]
+        timeout_action: Option<String>,
     },
 }
 
@@ -1009,6 +1021,9 @@ async fn main() {
             config,
             connection,
             format,
+            statement_timeout,
+            connection_max_lifetime,
+            timeout_action,
         }) => {
             let fmt: cli::OutputFormat = format.parse().unwrap_or(cli::OutputFormat::Table);
             let args = cli::CliArgs {
@@ -1017,6 +1032,9 @@ async fn main() {
                 connection_name: connection,
                 config_path: config,
                 format: fmt,
+                statement_timeout,
+                connection_max_lifetime,
+                timeout_action,
             };
             if let Err(e) = cli::run_cli(args).await {
                 eprintln!("error: {}", e);

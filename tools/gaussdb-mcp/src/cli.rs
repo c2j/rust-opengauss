@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use crate::config::resolve_all_connections;
+use crate::config::{resolve_all_connections, TimeoutConfig};
 use crate::connection::do_connect;
 use crate::output::{format_row_value, format_table};
 use crate::server::{format_error_chain, sqlstate_to_sqlcode};
@@ -17,7 +17,13 @@ fn format_sql_error(err: &tokio_opengauss::Error) -> String {
         if let Some(detail) = db_err.detail() {
             msg.push_str(&format!("\nDETAIL: {}", detail));
         }
-        if let Some(hint) = db_err.hint() {
+        // Special-case statement timeout for actionable guidance.
+        if sqlstate == "57014" {
+            msg.push_str(
+                "\nHINT: Query exceeded the configured statement_timeout. \
+                 Pass a larger --statement-timeout or optimize the query.",
+            );
+        } else if let Some(hint) = db_err.hint() {
             msg.push_str(&format!("\nHINT: {}", hint));
         }
         msg
@@ -54,6 +60,9 @@ pub(crate) struct CliArgs {
     pub connection_name: Option<String>,
     pub config_path: Option<String>,
     pub format: OutputFormat,
+    pub statement_timeout: Option<String>,
+    pub connection_max_lifetime: Option<String>,
+    pub timeout_action: Option<String>,
 }
 
 pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
@@ -92,8 +101,17 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
             .unwrap_or(&all_resolved[0])
     };
 
-    // 4. Connect
-    let (client, _handle) = do_connect(&target.connection_url, None)
+    // 4. Build effective TimeoutConfig: CLI overrides on top of config-file defaults.
+    let effective_timeout = TimeoutConfig::from_overrides(
+        args.statement_timeout.as_deref(),
+        args.connection_max_lifetime.as_deref(),
+        args.timeout_action.as_deref(),
+        Some(&target.timeout_config),
+    )
+    .map_err(|e| format!("Invalid timeout configuration: {}", e))?;
+
+    // 5. Connect
+    let (client, _handle) = do_connect(&target.connection_url, Some(&effective_timeout))
         .await
         .map_err(|e| format!("Connection failed: {}", format_error_chain(e.as_ref())))?;
 
