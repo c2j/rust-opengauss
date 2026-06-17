@@ -12,7 +12,7 @@
 - **操作系统密钥链密码** — 通过 macOS 钥匙串 / Windows 凭据管理器 / Linux Secret Service 安全管理密码
 - **密码自动迁移** — 首次连接成功时，明文密码自动迁移至操作系统密钥链
 - **TLS 支持** — 通过 `sslmode` 参数自动检测 TLS 模式 (disable / require / verify-full)
-- **连接诊断** — `--check-connection` 测试全部 TLS 模式，提供详细的服务器信息、TLS 证书详情和 GUC 配置
+- **连接诊断** — `check` 子命令测试全部 TLS 模式，提供详细的服务器信息、TLS 证书详情和 GUC 配置
 - **丰富的错误报告** — SQLSTATE、SQLCODE、严重等级、详细信息、提示、模式、表、列上下文
 - **文件日志** — 每日滚动日志，不干扰 stdio MCP 传输
 - **openGauss 认证** — 支持 SHA256、MD5+SHA256、SM3、SCRAM-SHA-256 和 MD5 认证
@@ -67,9 +67,9 @@ echo "SELECT count(*) FROM users" | gaussdb-mcp cli
 ### 模式一：MCP 服务器（默认）
 
 ```sh
-gaussdb-mcp                    # 默认 MCP 模式，stdio 传输
-gaussdb-mcp mcp                # 显式指定 MCP 模式
-gaussdb-mcp mcp --config ./prod.toml  # 使用自定义配置
+gaussdb-mcp                    # 默认: MCP 模式，stdio 传输
+gaussdb-mcp serve              # 显式指定 MCP 模式
+gaussdb-mcp serve --config ./prod.toml  # 使用自定义配置
 ```
 
 与 AI 助手集成（参见[与 AI 助手集成](#与-ai-助手集成)）。
@@ -80,11 +80,14 @@ gaussdb-mcp mcp --config ./prod.toml  # 使用自定义配置
 gaussdb-mcp cli [OPTIONS]
 
 OPTIONS:
-    -s, --sql <SQL>         SQL 语句
-    -f, --file <FILE>       从文件读取 SQL
-        --config <PATH>     配置文件路径
-        --connection <NAME> 目标连接名称
-        --format <FMT>      输出格式: table, json, vertical [默认: table]
+    -s, --sql <SQL>             SQL 语句
+    -f, --file <FILE>           从文件读取 SQL
+        --check-connection      测试连接而不执行 SQL
+    -v, --verbose               显示详细连接信息（配合 --check-connection）
+        --name <NAME>           目标连接名称
+        --config <PATH>         配置文件路径
+        --format <FMT>          输出格式: table, json, vertical [默认: table]
+        --statement-timeout     覆盖配置中的语句超时时间
 ```
 
 **示例：**
@@ -104,7 +107,10 @@ gaussdb-mcp cli --sql "INSERT INTO logs VALUES (1, 'hello')"
 gaussdb-mcp cli --sql "CREATE TABLE test (id int)"
 
 # 指定连接
-gaussdb-mcp cli --connection prod --sql "SELECT count(*) FROM orders"
+gaussdb-mcp cli --name prod --sql "SELECT count(*) FROM orders"
+
+# 检查指定连接的连通性
+gaussdb-mcp cli --check-connection --name prod
 ```
 
 ## 配置
@@ -151,7 +157,7 @@ url = "host=10.0.0.5 user=admin password=keyring dbname=staging sslmode=require"
 
 每个连接的密码可以是：
 - 明文字符串 — 首次成功连接时自动迁移至操作系统密钥链
-- `"keyring"` — 从操作系统密钥链读取（使用 `--store-password` 设置）
+- `"keyring"` — 从操作系统密钥链读取（使用 `store-password` 子命令设置）
 
 ## CLI 选项
 
@@ -159,35 +165,49 @@ url = "host=10.0.0.5 user=admin password=keyring dbname=staging sslmode=require"
 gaussdb-mcp [OPTIONS] [COMMAND]
 
 COMMANDS:
-    mcp     作为 MCP 服务器运行（默认）
-    cli     从命令行执行 SQL
+    serve           作为 MCP 服务器运行（默认，无子命令时）
+    check           测试数据库连接并退出
+    store-password  将密码存储到操作系统密钥链
+    cli             从命令行执行 SQL
 
-MCP 选项:
+全局选项（适用于所有子命令）:
     --config <PATH>           配置文件路径 (默认: ~/.gaussdb-mcp.toml)
-    --check-connection [NAME] 测试数据库连接并退出
-    -v, --verbose             显示详细连接信息
-    --store-password <PASS>   将密码存储到操作系统密钥链
-    --name <NAME>             目标连接名称 (配合 --store-password)
+    --name <NAME>             目标连接名称
 
-CLI 选项:
+SERVE:
+    （无额外选项）
+
+CHECK:
+    -v, --verbose             显示详细连接信息
+
+STORE-PASSWORD:
+    <PASSWORD>                要存储的密码（位置参数）
+
+CLI:
     -s, --sql <SQL>            要执行的 SQL 语句
     -f, --file <FILE>          从文件读取 SQL (或管道传入 stdin)
-    --config <PATH>            配置文件路径
-    --connection <NAME>        目标连接名称
-    --format <FMT>             输出格式: table, json, vertical [默认: table]
+        --check-connection     测试连接而不执行 SQL
+    -v, --verbose              显示详细连接信息（配合 --check-connection）
+        --format <FMT>         输出格式: table, json, vertical [默认: table]
+        --statement-timeout    覆盖配置中的语句超时 (如 "30s")
+        --connection-max-lifetime  连接回收间隔 (如 "10min")
+        --timeout-action       "cancel" (默认) 或 "disconnect"
 ```
 
 ### 连接诊断
 
 ```sh
 # 检查默认连接 (三阶段: NoTls → TLS-skip → TLS-verify)
-gaussdb-mcp --check-connection
+gaussdb-mcp check
 
 # 检查特定命名连接
-gaussdb-mcp --check-connection prod --config ~/.gaussdb-mcp.toml
+gaussdb-mcp check --name prod --config ~/.gaussdb-mcp.toml
 
 # 详细输出 (版本、GUC 参数、TLS 证书详情、耗时)
-gaussdb-mcp --check-connection --verbose
+gaussdb-mcp check --verbose
+
+# 也可以通过 cli 子命令使用
+gaussdb-mcp cli --check-connection --name prod -v
 ```
 
 诊断工具会：
@@ -201,10 +221,10 @@ gaussdb-mcp --check-connection --verbose
 
 ```sh
 # 为第一个/默认连接存储密码
-gaussdb-mcp --store-password 'MyP@ss123' --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password 'MyP@ss123' --config ~/.gaussdb-mcp.toml
 
 # 为命名连接存储密码
-gaussdb-mcp --store-password 'Pr0dP@ss' --name prod --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password 'Pr0dP@ss' --name prod --config ~/.gaussdb-mcp.toml
 
 # 首次成功 MCP 连接时，配置文件中的明文密码会自动迁移
 # 至操作系统密钥链，配置文件更新为 password = "keyring"
@@ -324,7 +344,7 @@ gaussdb-mcp --store-password 'Pr0dP@ss' --name prod --config ~/.gaussdb-mcp.toml
   "mcpServers": {
     "gaussdb": {
       "command": "/path/to/gaussdb-mcp",
-      "args": ["mcp", "--config", "/path/to/gaussdb-mcp.toml"]
+      "args": ["serve", "--config", "/path/to/gaussdb-mcp.toml"]
     }
   }
 }
@@ -415,7 +435,7 @@ GAUSSDB_URL="host=127.0.0.1 user=gaussdb dbname=postgres sslmode=require"
 GAUSSDB_URL="host=db.example.com user=gaussdb dbname=postgres sslmode=verify-full"
 ```
 
-通过 `--check-connection` 进行 TLS 自动检测，测试全部三种模式。
+通过 `check` 子命令进行 TLS 自动检测，测试全部三种模式。
 
 ## 认证
 
