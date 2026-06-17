@@ -248,6 +248,7 @@ gaussdb-mcp --store-password 'Pr0dP@ss' --name prod --config ~/.gaussdb-mcp.toml
 | 参数 | 类型 | 必填 | 描述 |
 |-----------|------|----------|-------------|
 | `sql` | string | 是 | SQL 查询 (仅限 SELECT 或 EXPLAIN) |
+| `timeout_ms` | number | 否 | 单次调用的语句超时（毫秒），覆盖连接默认值 |
 | `connection_name` | string | 否 | 目标连接名称 |
 
 **`get_execution_plan`**
@@ -256,6 +257,7 @@ gaussdb-mcp --store-password 'Pr0dP@ss' --name prod --config ~/.gaussdb-mcp.toml
 | `sql` | string | 是 | 要解释的 SQL 查询 |
 | `analyze` | boolean | 否 | 运行 EXPLAIN ANALYZE (默认: false) |
 | `format` | string | 否 | 输出格式: TEXT, JSON, YAML, XML (默认: TEXT) |
+| `timeout_ms` | number | 否 | 单次调用的语句超时（毫秒），覆盖连接默认值 |
 | `connection_name` | string | 否 | 目标连接名称 |
 
 ### 错误响应格式

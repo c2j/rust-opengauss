@@ -248,6 +248,7 @@ All tools accept an optional `connection_name` parameter to target a specific da
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `sql` | string | yes | SQL query (SELECT or EXPLAIN only) |
+| `timeout_ms` | number | no | Per-call statement timeout in milliseconds (overrides connection default) |
 | `connection_name` | string | no | Target connection name |
 
 **`get_execution_plan`**
@@ -256,6 +257,7 @@ All tools accept an optional `connection_name` parameter to target a specific da
 | `sql` | string | yes | SQL query to explain |
 | `analyze` | boolean | no | Run EXPLAIN ANALYZE (default: false) |
 | `format` | string | no | Output format: TEXT, JSON, YAML, XML (default: TEXT) |
+| `timeout_ms` | number | no | Per-call statement timeout in milliseconds (overrides connection default) |
 | `connection_name` | string | no | Target connection name |
 
 ### Error Response Format

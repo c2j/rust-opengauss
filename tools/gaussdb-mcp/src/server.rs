@@ -789,11 +789,20 @@ impl GaussdbMcp {
     }
 
     /// Run a read-only query with an optional per-call statement timeout.
+    ///
     /// When `timeout_ms` is set, temporarily sets the session-level
-    /// `statement_timeout` before the query and resets it afterward.
+    /// `statement_timeout` before the query and resets it to DEFAULT afterward.
+    ///
     /// Since the tokio-opengauss `transaction()` API requires `&mut Client`
     /// (which cannot be obtained from `&Client` behind `Arc`), we use
     /// `simple_query` for the SET commands and `query` for the actual SQL.
+    ///
+    /// **Concurrency note:** Because this uses session-level SET (not
+    /// transaction-scoped SET LOCAL), two concurrent tool calls on the same
+    /// connection with different `timeout_ms` values could interfere. This is
+    /// acceptable because MCP protocol requests are processed sequentially per
+    /// connection in practice. If concurrent per-call overrides become needed,
+    /// wrap each call in a per-connection Mutex.
     async fn query_with_optional_timeout(
         client: &tokio_opengauss::Client,
         sql: &str,

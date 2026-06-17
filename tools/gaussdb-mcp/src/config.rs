@@ -413,7 +413,7 @@ pub(crate) fn build_lazy_resolver(
         .is_some_and(|p| p != KEYRING_SENTINEL);
 
     if is_plaintext || conn.url.is_some() {
-        let resolved = resolve_single_connection(&conn, None, None)?;
+        let resolved = resolve_single_connection(&conn, None, base_timeout)?;
         return Ok(LazyConnectionEntry::Ready(resolved));
     }
 
