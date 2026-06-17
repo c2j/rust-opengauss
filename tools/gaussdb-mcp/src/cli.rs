@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use crate::config::{resolve_all_connections, TimeoutConfig};
+use crate::config::{
+    read_config, resolve_env_var_connection, resolve_single_connection, TimeoutConfig,
+};
 use crate::connection::do_connect;
 use crate::output::{format_row_value, format_table};
 use crate::server::{format_error_chain, sqlstate_to_sqlcode};
@@ -84,21 +86,32 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
         return Err("No SQL provided. Use -c/--sql, -f/--file, or pipe SQL to stdin.".to_string());
     }
 
-    // 2. Load config
+    // 2. Load config (without resolving all connection passwords)
     let config_path = args.config_path.map(PathBuf::from);
-    let (all_resolved, default_name) = resolve_all_connections(config_path)?;
+    let raw = read_config(config_path)?;
 
-    // 3. Find target connection
-    let target = if let Some(ref name) = args.connection_name {
-        all_resolved
-            .iter()
-            .find(|c| c.name == *name)
-            .ok_or_else(|| format!("Connection '{}' not found", name))?
+    // 3. Find target connection by name, resolve only that one
+    let target_name = args
+        .connection_name
+        .as_deref()
+        .unwrap_or(&raw.default_name);
+
+    let target_conn = raw
+        .connections
+        .iter()
+        .find(|c| c.name == target_name)
+        .ok_or_else(|| {
+            format!(
+                "Connection '{}' not found. Available: {:?}",
+                target_name,
+                raw.connections.iter().map(|c| &c.name).collect::<Vec<_>>()
+            )
+        })?;
+
+    let target = if raw.is_env_var {
+        resolve_env_var_connection(target_conn.url.clone().unwrap())
     } else {
-        all_resolved
-            .iter()
-            .find(|c| c.name == default_name)
-            .unwrap_or(&all_resolved[0])
+        resolve_single_connection(target_conn, raw.config_path.clone(), raw.base_timeout.as_ref())?
     };
 
     // 4. Build effective TimeoutConfig: CLI overrides on top of config-file defaults.

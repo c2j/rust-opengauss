@@ -12,7 +12,7 @@ Built on the openGauss/PostgreSQL wire protocol (v3.0+) with **zero FFI dependen
 - **OS keychain passwords** — Secure password storage via macOS Keychain / Windows Credential Manager / Linux Secret Service
 - **Auto password migration** — Plaintext passwords automatically migrate to OS keychain on first connection
 - **TLS support** — Automatic detection with `sslmode` (disable / require / verify-full)
-- **Connection diagnostics** — `--check-connection` tests all TLS modes with verbose server info, TLS cert details, and GUC config
+- **Connection diagnostics** — `check` subcommand tests all TLS modes with verbose server info, TLS cert details, and GUC config
 - **Rich error reporting** — SQLSTATE, SQLCODE, severity, detail, hint, schema, table, column context
 - **File-based logging** — Daily rotating logs, no interference with stdio MCP transport
 - **openGauss auth** — Supports SHA256, MD5+SHA256, SM3, SCRAM-SHA-256, and MD5 authentication
@@ -67,9 +67,9 @@ echo "SELECT count(*) FROM users" | gaussdb-mcp cli
 ### Mode 1: MCP Server (default)
 
 ```sh
-gaussdb-mcp                    # default MCP mode, stdio transport
-gaussdb-mcp mcp                # explicit MCP mode
-gaussdb-mcp mcp --config ./prod.toml  # with custom config
+gaussdb-mcp                    # default: MCP mode, stdio transport
+gaussdb-mcp serve              # explicit MCP mode
+gaussdb-mcp serve --config ./prod.toml  # with custom config
 ```
 
 Integrate with AI assistants (see [Integration](#integration-with-ai-assistants)).
@@ -80,11 +80,14 @@ Integrate with AI assistants (see [Integration](#integration-with-ai-assistants)
 gaussdb-mcp cli [OPTIONS]
 
 OPTIONS:
-    -s, --sql <SQL>         SQL statement to execute
-    -f, --file <FILE>       Read SQL from file
-        --config <PATH>     Path to config file
-        --connection <NAME> Target connection name
-        --format <FMT>      Output format: table, json, vertical [default: table]
+    -s, --sql <SQL>             SQL statement to execute
+    -f, --file <FILE>           Read SQL from file
+        --check-connection      Test connectivity without executing SQL
+    -v, --verbose               Show detailed connection info (with --check-connection)
+        --name <NAME>           Target connection name
+        --config <PATH>         Path to config file
+        --format <FMT>          Output format: table, json, vertical [default: table]
+        --statement-timeout     Override config statement timeout
 ```
 
 **Examples:**
@@ -104,7 +107,10 @@ gaussdb-mcp cli --sql "INSERT INTO logs VALUES (1, 'hello')"
 gaussdb-mcp cli --sql "CREATE TABLE test (id int)"
 
 # Target a specific connection
-gaussdb-mcp cli --connection prod --sql "SELECT count(*) FROM orders"
+gaussdb-mcp cli --name prod --sql "SELECT count(*) FROM orders"
+
+# Check connectivity for a specific connection
+gaussdb-mcp cli --check-connection --name prod
 ```
 
 ## Configuration
@@ -151,7 +157,7 @@ When `[[connections]]` is present, flat fields (`host`, `user`, etc.) are ignore
 
 Each connection's password can be:
 - Plaintext string — migrated to OS keychain on first successful connection
-- `"keyring"` — read from OS keychain (use `--store-password` to set)
+- `"keyring"` — read from OS keychain (use `store-password` subcommand to set)
 
 ## CLI Options
 
@@ -159,35 +165,49 @@ Each connection's password can be:
 gaussdb-mcp [OPTIONS] [COMMAND]
 
 COMMANDS:
-    mcp     Run as MCP server (default)
-    cli     Execute SQL from command line
+    serve           Run as MCP server (default when no subcommand given)
+    check           Test database connectivity and exit
+    store-password  Store password in OS keychain
+    cli             Execute SQL from command line
 
-MCP OPTIONS:
+GLOBAL OPTIONS (apply to all commands):
     --config <PATH>           Path to config file (default: ~/.gaussdb-mcp.toml)
-    --check-connection [NAME] Test database connectivity and exit
-    -v, --verbose             Show detailed connection info
-    --store-password <PASS>   Store password in OS keychain
-    --name <NAME>             Target connection name (for --store-password)
+    --name <NAME>             Target connection name
 
-CLI OPTIONS:
+SERVE:
+    (no additional options)
+
+CHECK:
+    -v, --verbose             Show detailed connection info
+
+STORE-PASSWORD:
+    <PASSWORD>                Password to store (positional argument)
+
+CLI:
     -s, --sql <SQL>            SQL statement to execute
     -f, --file <FILE>          Read SQL from file (or pipe to stdin)
-    --config <PATH>            Path to config file
-    --connection <NAME>        Target connection name
-    --format <FMT>             Output format: table, json, vertical [default: table]
+        --check-connection     Test connectivity without executing SQL
+    -v, --verbose              Show detailed connection info (with --check-connection)
+        --format <FMT>         Output format: table, json, vertical [default: table]
+        --statement-timeout    Override config statement timeout (e.g. "30s")
+        --connection-max-lifetime  Connection recycle interval (e.g. "10min")
+        --timeout-action       "cancel" (default) or "disconnect"
 ```
 
 ### Connection Diagnostics
 
 ```sh
 # Check the default connection (3-pass: NoTls → TLS-skip → TLS-verify)
-gaussdb-mcp --check-connection
+gaussdb-mcp check
 
 # Check a specific named connection
-gaussdb-mcp --check-connection prod --config ~/.gaussdb-mcp.toml
+gaussdb-mcp check --name prod --config ~/.gaussdb-mcp.toml
 
 # Verbose output (version, GUC params, TLS cert details, timing)
-gaussdb-mcp --check-connection --verbose
+gaussdb-mcp check --verbose
+
+# Also available via the cli subcommand
+gaussdb-mcp cli --check-connection --name prod -v
 ```
 
 The diagnostic tool:
@@ -201,10 +221,10 @@ The diagnostic tool:
 
 ```sh
 # Store password for the first/default connection
-gaussdb-mcp --store-password 'MyP@ss123' --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password 'MyP@ss123' --config ~/.gaussdb-mcp.toml
 
 # Store password for a named connection
-gaussdb-mcp --store-password 'Pr0dP@ss' --name prod --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password 'Pr0dP@ss' --name prod --config ~/.gaussdb-mcp.toml
 
 # On first successful MCP connection with plaintext config password,
 # auto-migration moves it to OS keychain and updates config to `password = "keyring"`
@@ -324,7 +344,7 @@ Add to `.cursor/mcp.json`:
   "mcpServers": {
     "gaussdb": {
       "command": "/path/to/gaussdb-mcp",
-      "args": ["mcp", "--config", "/path/to/gaussdb-mcp.toml"]
+      "args": ["serve", "--config", "/path/to/gaussdb-mcp.toml"]
     }
   }
 }
@@ -415,7 +435,7 @@ GAUSSDB_URL="host=127.0.0.1 user=gaussdb dbname=postgres sslmode=require"
 GAUSSDB_URL="host=db.example.com user=gaussdb dbname=postgres sslmode=verify-full"
 ```
 
-TLS auto-detection via `--check-connection` tests all three modes.
+TLS auto-detection via `check` subcommand tests all three modes.
 
 ## Authentication
 

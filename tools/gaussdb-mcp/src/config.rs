@@ -262,7 +262,7 @@ pub(crate) fn read_keyring_password(username: &str) -> Result<String, String> {
     entry.get_password().map_err(|e| {
         format!(
             "keyring password not found for '{}'. Store it first:\n  \
-             gaussdb-mcp --store-password <password> --config <path>\n  \
+             gaussdb-mcp store-password <password> --config <path>\n  \
              or set password in config file as plaintext (will be migrated automatically).\n  \
              Keyring error: {}",
             username, e
@@ -475,20 +475,36 @@ pub(crate) fn build_lazy_resolver(
     })
 }
 
-pub(crate) fn resolve_all_connections(
-    config_path: Option<PathBuf>,
-) -> Result<(Vec<ResolvedConnection>, String), String> {
+pub(crate) struct RawConfig {
+    pub(crate) connections: Vec<NamedConnection>,
+    pub(crate) default_name: String,
+    pub(crate) config_path: Option<PathBuf>,
+    pub(crate) base_timeout: Option<TimeoutConfig>,
+    pub(crate) is_env_var: bool,
+}
+
+pub(crate) fn read_config(config_path: Option<PathBuf>) -> Result<RawConfig, String> {
     if let Ok(url) = std::env::var("GAUSSDB_URL").or_else(|_| std::env::var("DATABASE_URL")) {
-        let resolved = ResolvedConnection {
+        let conn = NamedConnection {
             name: "default".to_string(),
-            connection_url: url,
-            config_path: None,
-            plaintext_password: None,
-            keyring_username: String::new(),
-            password_source: PasswordSource::EnvVar,
-            timeout_config: TimeoutConfig::default(),
+            url: Some(url),
+            host: None,
+            port: None,
+            user: None,
+            password: None,
+            dbname: None,
+            sslmode: None,
+            statement_timeout: None,
+            connection_max_lifetime: None,
+            timeout_action: None,
         };
-        return Ok((vec![resolved], "default".to_string()));
+        return Ok(RawConfig {
+            connections: vec![conn],
+            default_name: "default".to_string(),
+            config_path: None,
+            base_timeout: None,
+            is_env_var: true,
+        });
     }
 
     let config_path = find_config_path(config_path)?;
@@ -508,8 +524,6 @@ pub(crate) fn resolve_all_connections(
         )
     })?;
 
-    // Build flat-level base timeout config to inherit into named connections.
-    // Extract fields BEFORE resolve() consumes config.
     let base_tc = TimeoutConfig::from_overrides(
         config.statement_timeout.as_deref(),
         config.connection_max_lifetime.as_deref(),
@@ -526,16 +540,25 @@ pub(crate) fn resolve_all_connections(
             .unwrap_or_default()
     });
 
-    let mut resolved = Vec::with_capacity(connections.len());
-    for conn in &connections {
-        resolved.push(resolve_single_connection(
-            conn,
-            Some(config_path.clone()),
-            base_tc.as_ref(),
-        )?);
-    }
+    Ok(RawConfig {
+        connections,
+        default_name,
+        config_path: Some(config_path),
+        base_timeout: base_tc,
+        is_env_var: false,
+    })
+}
 
-    Ok((resolved, default_name))
+pub(crate) fn resolve_env_var_connection(url: String) -> ResolvedConnection {
+    ResolvedConnection {
+        name: "default".to_string(),
+        connection_url: url,
+        config_path: None,
+        plaintext_password: None,
+        keyring_username: String::new(),
+        password_source: PasswordSource::EnvVar,
+        timeout_config: TimeoutConfig::default(),
+    }
 }
 
 pub(crate) fn resolve_all_connections_lazy(
