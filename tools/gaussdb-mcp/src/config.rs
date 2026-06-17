@@ -2,9 +2,100 @@ use keyring::Entry;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub(crate) const KEYRING_SERVICE: &str = "gaussdb-mcp";
 pub(crate) const KEYRING_SENTINEL: &str = "keyring";
+
+// ─── Timeout types ─────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) enum TimeoutAction {
+    #[default]
+    Cancel,
+    Disconnect,
+}
+
+impl TimeoutAction {
+    pub(crate) fn from_str(s: &str) -> Result<Self, String> {
+        match s.trim().to_lowercase().as_str() {
+            "cancel" | "keep" => Ok(TimeoutAction::Cancel),
+            "disconnect" | "drop" | "reconnect" => Ok(TimeoutAction::Disconnect),
+            _ => Err(format!(
+                "unknown timeout_action '{}': expected cancel/keep/disconnect/drop/reconnect",
+                s
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TimeoutConfig {
+    pub(crate) statement_timeout: Option<Duration>,
+    pub(crate) connection_max_lifetime: Option<Duration>,
+    pub(crate) timeout_action: TimeoutAction,
+}
+
+impl TimeoutConfig {
+    /// Validate the timeout configuration.
+    ///
+    /// If both `statement_timeout` and `connection_max_lifetime` are set,
+    /// `statement_timeout` must be ≤ `connection_max_lifetime`.
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        match (self.statement_timeout, self.connection_max_lifetime) {
+            (Some(sto), Some(cml)) if sto > cml => Err(format!(
+                "statement_timeout ({:.0?}) exceeds connection_max_lifetime ({:.0?})",
+                sto, cml
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// Build a `TimeoutConfig` from optional raw string overrides,
+    /// inheriting unset fields from a base config.
+    ///
+    /// Calls `validate()` before returning.
+    pub(crate) fn from_overrides(
+        statement_timeout: Option<&str>,
+        connection_max_lifetime: Option<&str>,
+        timeout_action: Option<&str>,
+        base: Option<&TimeoutConfig>,
+    ) -> Result<Self, String> {
+        let statement_timeout = match statement_timeout {
+            Some(s) => {
+                let d = crate::duration_parse::parse_duration(s)?;
+                Some(d)
+            }
+            None => base.as_ref().and_then(|b| b.statement_timeout),
+        };
+
+        let connection_max_lifetime = match connection_max_lifetime {
+            Some(s) => {
+                let d = crate::duration_parse::parse_duration(s)?;
+                Some(d)
+            }
+            None => base.as_ref().and_then(|b| b.connection_max_lifetime),
+        };
+
+        let timeout_action = match timeout_action {
+            Some(s) => TimeoutAction::from_str(s)?,
+            None => base
+                .map(|b| b.timeout_action)
+                .unwrap_or_default(),
+        };
+
+        let config = TimeoutConfig {
+            statement_timeout,
+            connection_max_lifetime,
+            timeout_action,
+        };
+
+        config.validate()?;
+        Ok(config)
+    }
+}
+
+// ─── Connection types ───────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum PasswordSource {
@@ -437,4 +528,91 @@ pub(crate) fn resolve_all_connections_lazy(
     }
 
     Ok((entries, default_name))
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::*;
+
+    // ── validate() tests ─────────────────────────────────────────
+
+    #[test]
+    fn validate_ok_when_statement_le_lifetime() {
+        let config = TimeoutConfig {
+            statement_timeout: Some(Duration::from_secs(30)),
+            connection_max_lifetime: Some(Duration::from_secs(60)),
+            timeout_action: TimeoutAction::Cancel,
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_fails_when_statement_gt_lifetime() {
+        let config = TimeoutConfig {
+            statement_timeout: Some(Duration::from_secs(120)),
+            connection_max_lifetime: Some(Duration::from_secs(60)),
+            timeout_action: TimeoutAction::Cancel,
+        };
+        let err = config.validate().unwrap_err();
+        assert!(!err.is_empty(), "error message should not be empty");
+    }
+
+    #[test]
+    fn validate_ok_with_only_statement_timeout() {
+        let config = TimeoutConfig {
+            statement_timeout: Some(Duration::from_secs(30)),
+            connection_max_lifetime: None,
+            timeout_action: TimeoutAction::Cancel,
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    // ── TimeoutAction::from_str tests ────────────────────────────
+
+    #[test]
+    fn timeout_action_parses_aliases() {
+        assert_eq!(TimeoutAction::from_str("cancel").unwrap(), TimeoutAction::Cancel);
+        assert_eq!(TimeoutAction::from_str("CANCEL").unwrap(), TimeoutAction::Cancel);
+        assert_eq!(TimeoutAction::from_str("keep").unwrap(), TimeoutAction::Cancel);
+        assert_eq!(TimeoutAction::from_str("disconnect").unwrap(), TimeoutAction::Disconnect);
+        assert_eq!(TimeoutAction::from_str("DISCONNECT").unwrap(), TimeoutAction::Disconnect);
+        assert_eq!(TimeoutAction::from_str("drop").unwrap(), TimeoutAction::Disconnect);
+        assert_eq!(TimeoutAction::from_str("reconnect").unwrap(), TimeoutAction::Disconnect);
+        let err = TimeoutAction::from_str("invalid").unwrap_err();
+        assert!(!err.is_empty(), "error message should not be empty");
+    }
+
+    // ── from_overrides() tests ───────────────────────────────────
+
+    #[test]
+    fn from_overrides_inherits_unset_fields_from_base() {
+        let base = TimeoutConfig {
+            statement_timeout: Some(Duration::from_secs(30)),
+            connection_max_lifetime: Some(Duration::from_secs(300)),
+            timeout_action: TimeoutAction::Disconnect,
+        };
+        let config = TimeoutConfig::from_overrides(None, None, None, Some(&base)).unwrap();
+        assert_eq!(config.statement_timeout, base.statement_timeout);
+        assert_eq!(config.connection_max_lifetime, base.connection_max_lifetime);
+        assert_eq!(config.timeout_action, base.timeout_action);
+    }
+
+    #[test]
+    fn from_overrides_overrides_set_fields() {
+        let base = TimeoutConfig {
+            statement_timeout: Some(Duration::from_secs(30)),
+            connection_max_lifetime: Some(Duration::from_secs(300)),
+            timeout_action: TimeoutAction::Cancel,
+        };
+        let config = TimeoutConfig::from_overrides(
+            Some("60s"),
+            Some("600s"),
+            Some("disconnect"),
+            Some(&base),
+        )
+        .unwrap();
+        assert_eq!(config.statement_timeout, Some(Duration::from_secs(60)));
+        assert_eq!(config.connection_max_lifetime, Some(Duration::from_secs(600)));
+        assert_eq!(config.timeout_action, TimeoutAction::Disconnect);
+    }
 }
