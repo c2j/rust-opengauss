@@ -489,7 +489,7 @@ impl GaussdbMcp {
         };
 
         info!("probing database connection '{}' at startup", name);
-        let result = connection::do_connect(&url).await;
+        let result = connection::do_connect(&url, None).await;
 
         let mut conns = self.connections.lock().await;
         match result {
@@ -594,7 +594,7 @@ impl GaussdbMcp {
         name: String,
         url: String,
     ) -> Result<Arc<tokio_opengauss::Client>, McpError> {
-        let result = connection::do_connect(&url).await;
+        let result = connection::do_connect(&url, None).await;
         let mut conns = self.connections.lock().await;
 
         match result {

@@ -93,7 +93,7 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
     };
 
     // 4. Connect
-    let (client, _handle) = do_connect(&target.connection_url)
+    let (client, _handle) = do_connect(&target.connection_url, None)
         .await
         .map_err(|e| format!("Connection failed: {}", format_error_chain(e.as_ref())))?;
 
