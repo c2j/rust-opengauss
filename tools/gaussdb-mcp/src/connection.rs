@@ -26,7 +26,12 @@ pub(crate) async fn do_connect(
         let (client, connection) = tokio_opengauss::connect(url, tls).await?;
         let client = Arc::new(client);
 
-        // Apply server-side statement_timeout if configured.
+        let handle = tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                tracing::error!("database connection lost: {}", e);
+            }
+        });
+
         if let Some(tc) = timeout_config {
             if let Some(st) = tc.statement_timeout {
                 let ms = st.as_millis() as u64;
@@ -41,19 +46,18 @@ pub(crate) async fn do_connect(
                 }
             }
         }
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                tracing::error!("database connection lost: {}", e);
-            }
-        });
 
         (client, handle)
     } else {
         let (client, connection) = tokio_opengauss::connect(url, tokio_opengauss::NoTls).await?;
         let client = Arc::new(client);
 
-        // Apply server-side statement_timeout if configured.
+        let handle = tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                tracing::error!("database connection lost: {}", e);
+            }
+        });
+
         if let Some(tc) = timeout_config {
             if let Some(st) = tc.statement_timeout {
                 let ms = st.as_millis() as u64;
@@ -68,12 +72,6 @@ pub(crate) async fn do_connect(
                 }
             }
         }
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                tracing::error!("database connection lost: {}", e);
-            }
-        });
 
         (client, handle)
     };
