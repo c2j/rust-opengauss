@@ -14,6 +14,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
+#[cfg(target_os = "linux")]
+use tracing::debug;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::{
@@ -868,6 +870,82 @@ async fn handle_check_connection_cmd(
     handle_check_connection(target, verbose).await;
 }
 
+// ─── Process Lifecycle Helpers ───────────────────────────────────────────────
+
+#[cfg(target_os = "linux")]
+fn setup_parent_death_signal() {
+    unsafe extern "C" {
+        fn prctl(option: i32, arg2: i32, arg3: i32, arg4: i32, arg5: i32) -> i32;
+    }
+    const PR_SET_PDEATHSIG: i32 = 1;
+    const SIGTERM: i32 = 15;
+    // SAFETY: PR_SET_PDEATHSIG configures a per-process signal-on-parent-death
+    // attribute. No UB, no allocations, async-signal-safe.
+    let rc = unsafe { prctl(PR_SET_PDEATHSIG, SIGTERM, 0, 0, 0) };
+    if rc != 0 {
+        warn!(
+            "failed to set PR_SET_PDEATHSIG: {}",
+            std::io::Error::last_os_error()
+        );
+    } else {
+        debug!("PR_SET_PDEATHSIG(SIGTERM) installed");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn setup_parent_death_signal() {}
+
+async fn await_shutdown_signal() -> &'static str {
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                tokio::select! {
+                    _ = ctrl_c => "SIGINT",
+                    _ = sigterm.recv() => "SIGTERM",
+                }
+            }
+            Err(e) => {
+                warn!("failed to install SIGTERM handler: {e}, relying on SIGINT only");
+                let _ = ctrl_c.await;
+                "SIGINT"
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = ctrl_c.await;
+        "SIGINT"
+    }
+}
+
+#[cfg(unix)]
+async fn parent_death_watchdog(interval: std::time::Duration) {
+    unsafe extern "C" {
+        fn getppid() -> i32;
+    }
+    let original_ppid = unsafe { getppid() };
+    loop {
+        tokio::time::sleep(interval).await;
+        let current_ppid = unsafe { getppid() };
+        if current_ppid != original_ppid {
+            info!(
+                "parent process exited (PPID {original_ppid} → {current_ppid}), \
+                 initiating self-shutdown"
+            );
+            return;
+        }
+    }
+}
+
+#[cfg(not(unix))]
+async fn parent_death_watchdog(_interval: std::time::Duration) {
+    // Non-Unix: no portable getppid. Rely on signals + stdin EOF only.
+    std::future::pending::<()>().await;
+}
+
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
 async fn run_mcp_server(config_path: Option<String>) {
@@ -963,6 +1041,18 @@ async fn run_mcp_server(config_path: Option<String>) {
 
     let server = Arc::new(server);
 
+    // Signal + parent-death watchers must be spawned before serve() so they're
+    // active even during the MCP handshake (which blocks on client initialize).
+    tokio::spawn(async {
+        let sig = await_shutdown_signal().await;
+        info!("received {sig}, shutting down");
+        std::process::exit(0);
+    });
+    tokio::spawn(async {
+        parent_death_watchdog(std::time::Duration::from_secs(5)).await;
+        std::process::exit(0);
+    });
+
     let probe = Arc::clone(&server);
     tokio::spawn(async move {
         probe.try_connect().await;
@@ -970,26 +1060,30 @@ async fn run_mcp_server(config_path: Option<String>) {
 
     info!("starting MCP server on stdio");
 
-    let service = Arc::clone(&server)
-        .serve(stdio())
-        .await
-        .unwrap_or_else(|e| {
-            error!("MCP server start failed: {}", e);
-            panic!("Failed to start MCP server: {}", e);
-        });
+    let service = match Arc::clone(&server).serve(stdio()).await {
+        Ok(s) => s,
+        Err(e) => {
+            error!("MCP server start failed: {e}");
+            std::process::exit(1);
+        }
+    };
 
     info!("MCP server ready");
 
-    service.waiting().await.unwrap_or_else(|e| {
-        error!("MCP server error: {}", e);
-        panic!("Server error: {}", e);
-    });
+    match service.waiting().await {
+        Ok(reason) => info!("MCP server stopped: {reason:?}"),
+        Err(e) => error!("MCP server task join error: {e}"),
+    }
+
+    info!("MCP server exiting");
+    std::process::exit(0);
 }
 
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() {
+    setup_parent_death_signal();
     init_logging();
 
     let cli = Cli::parse();
