@@ -3,6 +3,7 @@ mod config;
 mod connection;
 mod output;
 mod queries;
+mod duration_parse;
 mod server;
 
 use clap::{Parser, Subcommand};
