@@ -252,6 +252,7 @@ pub(crate) enum LazyConnectionEntry {
     Pending {
         name: String,
         resolver: Arc<dyn (Fn() -> Result<String, String>) + Send + Sync>,
+        timeout_config: TimeoutConfig,
     },
 }
 
@@ -398,7 +399,10 @@ pub(crate) fn resolve_single_connection(
     })
 }
 
-pub(crate) fn build_lazy_resolver(conn: &NamedConnection) -> Result<LazyConnectionEntry, String> {
+pub(crate) fn build_lazy_resolver(
+    conn: &NamedConnection,
+    base_timeout: Option<&TimeoutConfig>,
+) -> Result<LazyConnectionEntry, String> {
     let conn = conn.clone();
     let keyring_user = conn.keyring_username();
 
@@ -463,7 +467,12 @@ pub(crate) fn build_lazy_resolver(conn: &NamedConnection) -> Result<LazyConnecti
         Ok(parts.join(" "))
     });
 
-    Ok(LazyConnectionEntry::Pending { name, resolver })
+    let timeout_config = conn.timeout_config(base_timeout)?;
+    Ok(LazyConnectionEntry::Pending {
+        name,
+        resolver,
+        timeout_config,
+    })
 }
 
 pub(crate) fn resolve_all_connections(
@@ -565,6 +574,15 @@ pub(crate) fn resolve_all_connections_lazy(
         )
     })?;
 
+    // Build flat-level base timeout config to inherit into named connections.
+    let base_tc = TimeoutConfig::from_overrides(
+        config.statement_timeout.as_deref(),
+        config.connection_max_lifetime.as_deref(),
+        config.timeout_action.as_deref(),
+        None,
+    )
+    .ok();
+
     let (connections, default_name) = config.resolve()?;
     let default_name = default_name.unwrap_or_else(|| {
         connections
@@ -575,7 +593,7 @@ pub(crate) fn resolve_all_connections_lazy(
 
     let mut entries = Vec::with_capacity(connections.len());
     for conn in &connections {
-        entries.push(build_lazy_resolver(conn)?);
+        entries.push(build_lazy_resolver(conn, base_tc.as_ref())?);
     }
 
     Ok((entries, default_name))

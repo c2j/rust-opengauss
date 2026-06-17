@@ -10,9 +10,11 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
+use crate::config::TimeoutConfig;
 use crate::connection;
 use crate::output;
 use crate::queries;
+use std::time::Instant;
 
 pub(crate) fn sqlstate_to_sqlcode(state: &str) -> i32 {
     match state {
@@ -392,10 +394,15 @@ type CallbackFn = Arc<dyn Fn() + Send + Sync>;
 
 enum ConnectionState {
     Pending(ResolveFn),
-    Connecting(String),
+    Connecting {
+        url: String,
+        timeout_config: TimeoutConfig,
+    },
     Connected {
         client: Arc<tokio_opengauss::Client>,
         url: String,
+        timeout_config: TimeoutConfig,
+        connected_at: Instant,
     },
     Unavailable(String),
 }
@@ -404,24 +411,43 @@ pub struct GaussdbMcp {
     connections: Arc<Mutex<HashMap<String, ConnectionState>>>,
     default_name: String,
     on_connected: HashMap<String, CallbackFn>,
+    /// Timeout config per connection name. Set at construction time,
+    /// used when (re)establishing connections.
+    timeout_configs: HashMap<String, TimeoutConfig>,
 }
 
 impl GaussdbMcp {
     /// Create a multi-connection server with eager (pre-resolved) URLs.
-    pub fn new_multi_disconnected(entries: Vec<(String, String)>, default_name: String) -> Self {
+    pub fn new_multi_disconnected(
+        entries: Vec<(String, String)>,
+        default_name: String,
+        timeout_configs: HashMap<String, TimeoutConfig>,
+    ) -> Self {
         let mut connections = HashMap::new();
         for (name, url) in entries {
-            connections.insert(name, ConnectionState::Connecting(url));
+            let tc = timeout_configs.get(&name).cloned().unwrap_or_default();
+            connections.insert(
+                name,
+                ConnectionState::Connecting {
+                    url,
+                    timeout_config: tc,
+                },
+            );
         }
         Self {
             connections: Arc::new(Mutex::new(connections)),
             default_name,
             on_connected: HashMap::new(),
+            timeout_configs,
         }
     }
 
     /// Create a multi-connection server with lazy resolvers (deferred keychain reads).
-    pub fn new_multi_lazy(entries: Vec<(String, ResolveFn)>, default_name: String) -> Self {
+    pub fn new_multi_lazy(
+        entries: Vec<(String, ResolveFn)>,
+        default_name: String,
+        timeout_configs: HashMap<String, TimeoutConfig>,
+    ) -> Self {
         let mut connections = HashMap::new();
         for (name, resolver) in entries {
             connections.insert(name, ConnectionState::Pending(resolver));
@@ -430,13 +456,18 @@ impl GaussdbMcp {
             connections: Arc::new(Mutex::new(connections)),
             default_name,
             on_connected: HashMap::new(),
+            timeout_configs,
         }
     }
 
     /// Backward-compatible: single connection, eager URL.
     #[allow(dead_code)]
     pub fn new_disconnected(url: String) -> Self {
-        Self::new_multi_disconnected(vec![("default".to_string(), url)], "default".to_string())
+        Self::new_multi_disconnected(
+            vec![("default".to_string(), url)],
+            "default".to_string(),
+            HashMap::new(),
+        )
     }
 
     /// Backward-compatible: single connection, lazy resolver.
@@ -445,6 +476,7 @@ impl GaussdbMcp {
         Self::new_multi_lazy(
             vec![("default".to_string(), resolver)],
             "default".to_string(),
+            HashMap::new(),
         )
     }
 
@@ -456,12 +488,15 @@ impl GaussdbMcp {
             ConnectionState::Connected {
                 client: Arc::new(client),
                 url: String::new(),
+                timeout_config: TimeoutConfig::default(),
+                connected_at: Instant::now(),
             },
         );
         Self {
             connections: Arc::new(Mutex::new(connections)),
             default_name: "default".to_string(),
             on_connected: HashMap::new(),
+            timeout_configs: HashMap::new(),
         }
     }
 
@@ -480,16 +515,18 @@ impl GaussdbMcp {
 
     /// Probe the default connection at startup.
     pub async fn try_connect(&self) {
-        let (name, url) = {
+        let (name, url, tc) = {
             let conns = self.connections.lock().await;
             match conns.get(&self.default_name) {
-                Some(ConnectionState::Connecting(url)) => (self.default_name.clone(), url.clone()),
+                Some(ConnectionState::Connecting { url, timeout_config }) => {
+                    (self.default_name.clone(), url.clone(), timeout_config.clone())
+                }
                 _ => return,
             }
         };
 
         info!("probing database connection '{}' at startup", name);
-        let result = connection::do_connect(&url, None).await;
+        let result = connection::do_connect(&url, Some(&tc)).await;
 
         let mut conns = self.connections.lock().await;
         match result {
@@ -503,6 +540,8 @@ impl GaussdbMcp {
                     ConnectionState::Connected {
                         client,
                         url: url.clone(),
+                        timeout_config: tc,
+                        connected_at: Instant::now(),
                     },
                 );
             }
@@ -527,8 +566,33 @@ impl GaussdbMcp {
         let mut conns = self.connections.lock().await;
 
         match conns.get(&name) {
-            Some(ConnectionState::Connected { client, url }) => {
+            Some(ConnectionState::Connected {
+                client,
+                url,
+                timeout_config,
+                connected_at,
+            }) => {
                 if !client.is_closed() {
+                    // Check connection max lifetime.
+                    if let Some(max_lifetime) = timeout_config.connection_max_lifetime {
+                        if connected_at.elapsed() >= max_lifetime {
+                            info!(
+                                "connection '{}' exceeded max_lifetime ({:?}), recycling",
+                                name, max_lifetime
+                            );
+                            let url = url.clone();
+                            let tc = timeout_config.clone();
+                            conns.insert(
+                                name.clone(),
+                                ConnectionState::Connecting {
+                                    url: url.clone(),
+                                    timeout_config: tc,
+                                },
+                            );
+                            drop(conns);
+                            return self.connect_with_url(name, url).await;
+                        }
+                    }
                     return Ok(Arc::clone(client));
                 }
                 // Connection is dead — downgrade to Connecting so other
@@ -538,7 +602,14 @@ impl GaussdbMcp {
                     name
                 );
                 let url = url.clone();
-                conns.insert(name.clone(), ConnectionState::Connecting(url.clone()));
+                let tc = timeout_config.clone();
+                conns.insert(
+                    name.clone(),
+                    ConnectionState::Connecting {
+                        url: url.clone(),
+                        timeout_config: tc,
+                    },
+                );
                 drop(conns);
                 self.connect_with_url(name, url).await
             }
@@ -563,7 +634,8 @@ impl GaussdbMcp {
                 );
                 self.connect_with_url(name, url).await
             }
-            Some(ConnectionState::Connecting(url) | ConnectionState::Unavailable(url)) => {
+            Some(ConnectionState::Connecting { url, .. })
+            | Some(ConnectionState::Unavailable(url)) => {
                 let url = url.clone();
                 drop(conns);
                 info!("attempting database connection for '{}'", name);
@@ -594,7 +666,13 @@ impl GaussdbMcp {
         name: String,
         url: String,
     ) -> Result<Arc<tokio_opengauss::Client>, McpError> {
-        let result = connection::do_connect(&url, None).await;
+        let tc = self
+            .timeout_configs
+            .get(&name)
+            .cloned()
+            .unwrap_or_default();
+
+        let result = connection::do_connect(&url, Some(&tc)).await;
         let mut conns = self.connections.lock().await;
 
         match result {
@@ -608,6 +686,8 @@ impl GaussdbMcp {
                     ConnectionState::Connected {
                         client: Arc::clone(&client),
                         url: url.clone(),
+                        timeout_config: tc,
+                        connected_at: Instant::now(),
                     },
                 );
                 Ok(client)
@@ -624,13 +704,25 @@ impl GaussdbMcp {
     /// so the next tool call will reconnect automatically.
     async fn downgrade_on_error(&self, name: &str) {
         let mut conns = self.connections.lock().await;
-        if let Some(ConnectionState::Connected { url, .. }) = conns.get(name) {
+        if let Some(ConnectionState::Connected {
+            url,
+            timeout_config,
+            ..
+        }) = conns.get(name)
+        {
             let url = url.clone();
+            let tc = timeout_config.clone();
             info!(
                 "connection '{}' downgrading to Connecting after query error",
                 name
             );
-            conns.insert(name.to_string(), ConnectionState::Connecting(url));
+            conns.insert(
+                name.to_string(),
+                ConnectionState::Connecting {
+                    url,
+                    timeout_config: tc,
+                },
+            );
         }
     }
 
@@ -1004,7 +1096,7 @@ impl GaussdbMcp {
             .map(|(name, state)| {
                 let status = match state {
                     ConnectionState::Connected { .. } => "connected",
-                    ConnectionState::Connecting(_) => "connecting",
+                    ConnectionState::Connecting { .. } => "connecting",
                     ConnectionState::Pending(_) => "pending",
                     ConnectionState::Unavailable(_) => "unavailable",
                 };

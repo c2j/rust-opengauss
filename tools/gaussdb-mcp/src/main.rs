@@ -9,6 +9,7 @@ mod server;
 use clap::{Parser, Subcommand};
 use keyring::Entry;
 use rmcp::{ServiceExt, transport::stdio};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -16,9 +17,9 @@ use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use crate::config::{
-    KEYRING_SERVICE, LazyConnectionEntry, PasswordSource, ResolvedConnection, default_config_path,
-    resolve_all_connections, resolve_all_connections_lazy, rewrite_password_to_sentinel,
-    store_keyring_password,
+    KEYRING_SERVICE, LazyConnectionEntry, PasswordSource, ResolvedConnection, TimeoutConfig,
+    default_config_path, resolve_all_connections, resolve_all_connections_lazy,
+    rewrite_password_to_sentinel, store_keyring_password,
 };
 use crate::server::{format_error_chain, redact_url};
 
@@ -869,11 +870,14 @@ async fn run_mcp_server(config_path: Option<String>) {
     let mut eager_entries = Vec::new();
     let mut lazy_resolvers = Vec::new();
     let mut callbacks_to_register: Vec<(String, Arc<dyn Fn() + Send + Sync>)> = Vec::new();
+    let mut timeout_configs: HashMap<String, TimeoutConfig> = HashMap::new();
 
     for entry in lazy_entries {
         match entry {
             LazyConnectionEntry::Ready(resolved) => {
                 let conn_name = resolved.name.clone();
+                timeout_configs.insert(conn_name.clone(), resolved.timeout_config.clone());
+
                 let config_path = resolved.config_path.clone();
                 let plaintext_password = resolved.plaintext_password.clone();
                 let keyring_username = resolved.keyring_username.clone();
@@ -911,14 +915,19 @@ async fn run_mcp_server(config_path: Option<String>) {
 
                 eager_entries.push((resolved.name, resolved.connection_url));
             }
-            LazyConnectionEntry::Pending { name, resolver } => {
+            LazyConnectionEntry::Pending {
+                name,
+                resolver,
+                timeout_config,
+            } => {
+                timeout_configs.insert(name.clone(), timeout_config);
                 lazy_resolvers.push((name, resolver));
             }
         }
     }
 
     let mut server = if !eager_entries.is_empty() && lazy_resolvers.is_empty() {
-        server::GaussdbMcp::new_multi_disconnected(eager_entries, default_name)
+        server::GaussdbMcp::new_multi_disconnected(eager_entries, default_name, timeout_configs)
     } else if !lazy_resolvers.is_empty() {
         let all_lazy = eager_entries
             .into_iter()
@@ -931,9 +940,9 @@ async fn run_mcp_server(config_path: Option<String>) {
             })
             .chain(lazy_resolvers)
             .collect();
-        server::GaussdbMcp::new_multi_lazy(all_lazy, default_name)
+        server::GaussdbMcp::new_multi_lazy(all_lazy, default_name, timeout_configs)
     } else {
-        server::GaussdbMcp::new_multi_disconnected(Vec::new(), default_name)
+        server::GaussdbMcp::new_multi_disconnected(Vec::new(), default_name, HashMap::new())
     };
 
     for (name, cb) in callbacks_to_register {
