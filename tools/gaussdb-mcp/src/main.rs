@@ -20,8 +20,8 @@ use tracing_subscriber::EnvFilter;
 
 use crate::config::{
     KEYRING_SERVICE, LazyConnectionEntry, PasswordSource, ResolvedConnection, TimeoutConfig,
-    default_config_path, resolve_all_connections, resolve_all_connections_lazy,
-    rewrite_password_to_sentinel, store_keyring_password,
+    default_config_path, read_config, resolve_all_connections_lazy, resolve_env_var_connection,
+    resolve_single_connection, rewrite_password_to_sentinel, store_keyring_password,
 };
 use crate::server::{format_error_chain, redact_url};
 
@@ -30,33 +30,34 @@ use crate::server::{format_error_chain, redact_url};
 #[derive(Parser)]
 #[command(name = "gaussdb", version, about = concat!("openGauss MCP server and CLI tool — v", env!("CARGO_PKG_VERSION")))]
 struct Cli {
+    /// Path to config file
+    #[arg(long, global = true)]
+    config: Option<String>,
+
+    /// Target connection name
+    #[arg(long, global = true)]
+    name: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run as MCP server (default when no subcommand)
-    Mcp {
-        /// Path to config file
-        #[arg(long)]
-        config: Option<String>,
+    /// Run as MCP server (default when no subcommand given)
+    Serve,
 
-        /// Test database connectivity and exit
-        #[arg(long, num_args = 0..=1)]
-        check_connection: Option<Option<String>>,
-
+    /// Test database connectivity and exit
+    Check {
         /// Show detailed connection info
         #[arg(short, long)]
         verbose: bool,
+    },
 
-        /// Store password in OS keychain
-        #[arg(long)]
-        store_password: Option<String>,
-
-        /// Target connection name
-        #[arg(long)]
-        name: Option<String>,
+    /// Store password in OS keychain
+    StorePassword {
+        /// Password to store
+        password: String,
     },
 
     /// Execute SQL from command line
@@ -65,17 +66,17 @@ enum Commands {
         #[arg(short, long)]
         sql: Option<String>,
 
-        /// Read SQL from file
+        /// Read SQL from file (or pipe to stdin)
         #[arg(short, long)]
         file: Option<String>,
 
-        /// Path to config file
+        /// Test database connectivity without executing SQL
         #[arg(long)]
-        config: Option<String>,
+        check_connection: bool,
 
-        /// Target connection name
-        #[arg(long)]
-        connection: Option<String>,
+        /// Show detailed connection info (use with --check-connection)
+        #[arg(short, long)]
+        verbose: bool,
 
         /// Output format: table, json, vertical
         #[arg(long, default_value = "table")]
@@ -197,7 +198,7 @@ fn handle_store_password(password: String, name: Option<String>, config_path: Op
         std::process::exit(1);
     });
 
-    let (connections, _) = config.resolve().unwrap_or_else(|e| {
+    let (connections, default_name) = config.resolve().unwrap_or_else(|e| {
         eprintln!("error: {}", e);
         std::process::exit(1);
     });
@@ -215,10 +216,16 @@ fn handle_store_password(password: String, name: Option<String>, config_path: Op
                 std::process::exit(1);
             })
     } else {
-        connections.first().unwrap_or_else(|| {
-            eprintln!("error: no connections defined in config");
-            std::process::exit(1);
-        })
+        let default = default_name.unwrap_or_else(|| {
+            connections.first().map(|c| c.name.clone()).unwrap_or_default()
+        });
+        connections
+            .iter()
+            .find(|c| c.name == default)
+            .unwrap_or_else(|| {
+                eprintln!("error: default connection '{}' not found in config", default);
+                std::process::exit(1);
+            })
     };
 
     let keyring_user = target.keyring_username();
@@ -843,31 +850,36 @@ async fn handle_check_connection_cmd(
     verbose: bool,
     config_path: Option<PathBuf>,
 ) {
-    let (all_resolved, default_name) = resolve_all_connections(config_path).unwrap_or_else(|e| {
+    let raw = read_config(config_path).unwrap_or_else(|e| {
         eprintln!("error: {}", e);
         std::process::exit(1);
     });
 
-    let target = if let Some(ref name) = conn_arg {
-        all_resolved
-            .iter()
-            .find(|c| c.name == *name)
-            .unwrap_or_else(|| {
-                eprintln!("error: connection '{}' not found", name);
-                eprintln!(
-                    "  available: {:?}",
-                    all_resolved.iter().map(|c| &c.name).collect::<Vec<_>>()
-                );
-                std::process::exit(1);
-            })
-    } else {
-        all_resolved
-            .iter()
-            .find(|c| c.name == default_name)
-            .unwrap_or(&all_resolved[0])
+    let target_name = conn_arg.as_deref().unwrap_or(&raw.default_name);
+
+    let target_conn = match raw.connections.iter().find(|c| c.name == target_name) {
+        Some(c) => c,
+        None => {
+            eprintln!("error: connection '{}' not found", target_name);
+            eprintln!(
+                "  available: {:?}",
+                raw.connections.iter().map(|c| &c.name).collect::<Vec<_>>()
+            );
+            std::process::exit(1);
+        }
     };
 
-    handle_check_connection(target, verbose).await;
+    let resolved = if raw.is_env_var {
+        resolve_env_var_connection(target_conn.url.clone().unwrap())
+    } else {
+        resolve_single_connection(target_conn, raw.config_path.clone(), raw.base_timeout.as_ref())
+            .unwrap_or_else(|e| {
+                eprintln!("error: {}", e);
+                std::process::exit(1);
+            })
+    };
+
+    handle_check_connection(&resolved, verbose).await;
 }
 
 // ─── Process Lifecycle Helpers ───────────────────────────────────────────────
@@ -1089,55 +1101,47 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Mcp {
-            config,
-            check_connection,
-            verbose,
-            store_password,
-            name,
-        }) => {
-            if let Some(password) = store_password {
-                handle_store_password(password, name, config);
-                return;
-            }
-
-            if let Some(conn_arg) = check_connection {
-                let config_path = config.map(PathBuf::from);
-                handle_check_connection_cmd(conn_arg, verbose, config_path).await;
-                return;
-            }
-
-            run_mcp_server(config).await;
+        None | Some(Commands::Serve) => {
+            run_mcp_server(cli.config).await;
+        }
+        Some(Commands::Check { verbose }) => {
+            let config_path = cli.config.map(PathBuf::from);
+            handle_check_connection_cmd(cli.name, verbose, config_path).await;
+        }
+        Some(Commands::StorePassword { password }) => {
+            handle_store_password(password, cli.name, cli.config);
         }
         Some(Commands::Cli {
             sql,
             file,
-            config,
-            connection,
+            check_connection,
+            verbose,
             format,
             statement_timeout,
             connection_max_lifetime,
             timeout_action,
         }) => {
-            let fmt: cli::OutputFormat = format.parse().unwrap_or(cli::OutputFormat::Table);
-            let args = cli::CliArgs {
-                sql,
-                file,
-                connection_name: connection,
-                config_path: config,
-                format: fmt,
-                statement_timeout,
-                connection_max_lifetime,
-                timeout_action,
-            };
-            if let Err(e) = cli::run_cli(args).await {
-                eprintln!("error: {}", e);
-                std::process::exit(1);
+            if check_connection {
+                let config_path = cli.config.map(PathBuf::from);
+                handle_check_connection_cmd(cli.name, verbose, config_path).await;
+            } else {
+                let fmt: cli::OutputFormat =
+                    format.parse().unwrap_or(cli::OutputFormat::Table);
+                let args = cli::CliArgs {
+                    sql,
+                    file,
+                    connection_name: cli.name,
+                    config_path: cli.config,
+                    format: fmt,
+                    statement_timeout,
+                    connection_max_lifetime,
+                    timeout_action,
+                };
+                if let Err(e) = cli::run_cli(args).await {
+                    eprintln!("error: {}", e);
+                    std::process::exit(1);
+                }
             }
-        }
-        None => {
-            // No subcommand = default to MCP mode (backward compat)
-            run_mcp_server(None).await;
         }
     }
 }
