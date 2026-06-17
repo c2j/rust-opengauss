@@ -5,6 +5,7 @@ on:
     tags:
       - "v*"
       - "gaussdb-v*"
+      - "gaussdb-mcp-v*"
   workflow_dispatch:
     inputs:
       version:
