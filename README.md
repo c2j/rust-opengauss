@@ -68,8 +68,8 @@ echo "SELECT count(*) FROM users" | gaussdb-mcp cli
 
 ```sh
 gaussdb-mcp                    # default: MCP mode, stdio transport
-gaussdb-mcp serve              # explicit MCP mode
-gaussdb-mcp serve --config ./prod.toml  # with custom config
+gaussdb-mcp mcp                 # explicit MCP mode
+gaussdb-mcp mcp --config ./prod.toml  # with custom config
 ```
 
 Integrate with AI assistants (see [Integration](#integration-with-ai-assistants)).
@@ -165,7 +165,7 @@ Each connection's password can be:
 gaussdb-mcp [OPTIONS] [COMMAND]
 
 COMMANDS:
-    serve           Run as MCP server (default when no subcommand given)
+    mcp             Run as MCP server (default when no subcommand given)
     check           Test database connectivity and exit
     store-password  Store password in OS keychain
     cli             Execute SQL from command line
@@ -344,7 +344,7 @@ Add to `.cursor/mcp.json`:
   "mcpServers": {
     "gaussdb": {
       "command": "/path/to/gaussdb-mcp",
-      "args": ["serve", "--config", "/path/to/gaussdb-mcp.toml"]
+      "args": ["mcp", "--config", "/path/to/gaussdb-mcp.toml"]
     }
   }
 }

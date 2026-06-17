@@ -45,7 +45,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Run as MCP server (default when no subcommand given)
-    Serve,
+    Mcp,
 
     /// Test database connectivity and exit
     Check {
@@ -1101,7 +1101,7 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        None | Some(Commands::Serve) => {
+        None | Some(Commands::Mcp) => {
             run_mcp_server(cli.config).await;
         }
         Some(Commands::Check { verbose }) => {

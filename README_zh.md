@@ -68,8 +68,8 @@ echo "SELECT count(*) FROM users" | gaussdb-mcp cli
 
 ```sh
 gaussdb-mcp                    # 默认: MCP 模式，stdio 传输
-gaussdb-mcp serve              # 显式指定 MCP 模式
-gaussdb-mcp serve --config ./prod.toml  # 使用自定义配置
+gaussdb-mcp mcp                 # 显式指定 MCP 模式
+gaussdb-mcp mcp --config ./prod.toml  # 使用自定义配置
 ```
 
 与 AI 助手集成（参见[与 AI 助手集成](#与-ai-助手集成)）。
@@ -165,7 +165,7 @@ url = "host=10.0.0.5 user=admin password=keyring dbname=staging sslmode=require"
 gaussdb-mcp [OPTIONS] [COMMAND]
 
 COMMANDS:
-    serve           作为 MCP 服务器运行（默认，无子命令时）
+    mcp             作为 MCP 服务器运行（默认，无子命令时）
     check           测试数据库连接并退出
     store-password  将密码存储到操作系统密钥链
     cli             从命令行执行 SQL
@@ -344,7 +344,7 @@ gaussdb-mcp store-password 'Pr0dP@ss' --name prod --config ~/.gaussdb-mcp.toml
   "mcpServers": {
     "gaussdb": {
       "command": "/path/to/gaussdb-mcp",
-      "args": ["serve", "--config", "/path/to/gaussdb-mcp.toml"]
+      "args": ["mcp", "--config", "/path/to/gaussdb-mcp.toml"]
     }
   }
 }
