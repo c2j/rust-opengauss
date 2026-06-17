@@ -328,6 +328,76 @@ Add to `.cursor/mcp.json`:
 }
 ```
 
+## Statement Timeout & Connection Lifetime
+
+`gaussdb-mcp` supports configurable SQL execution timeouts to prevent runaway queries from blocking AI assistant sessions. Applies to both MCP server and CLI.
+
+### Configuration (TOML)
+
+Per-connection timeout settings in the config file:
+
+```toml
+[[connections]]
+name = "prod"
+host = "192.168.1.10"
+user = "admin"
+password = "keyring"
+dbname = "production"
+
+statement_timeout = "30s"              # cancel queries running longer than 30s
+connection_max_lifetime = "10min"      # recycle connection every 10 minutes
+timeout_action = "cancel"              # "cancel" (default) or "disconnect"
+```
+
+Or as flat-level defaults inherited by all connections:
+
+```toml
+statement_timeout = "30s"
+connection_max_lifetime = "10min"
+timeout_action = "cancel"
+```
+
+Accepted duration formats: bare integers (seconds), or with suffix: `500ms`, `30s`, `5min`, `1h`, `2d`.
+
+### CLI
+
+```sh
+# Override statement timeout for a single CLI invocation
+gaussdb-mcp cli --sql "SELECT pg_sleep(60)" --statement-timeout 5s
+
+# Force disconnect on timeout (connection recycled on next call)
+gaussdb-mcp cli --sql "..." --statement-timeout 30s --timeout-action disconnect
+
+# Set connection max lifetime
+gaussdb-mcp cli --sql "..." --connection-max-lifetime 10min
+```
+
+### MCP Tool Per-Call Override
+
+`execute_query` and `get_execution_plan` accept an optional `timeout_ms` parameter that overrides the connection-level default for a single call:
+
+```json
+{
+  "sql": "SELECT count(*) FROM huge_table",
+  "timeout_ms": 5000
+}
+```
+
+If `timeout_ms` is omitted, the connection's global `statement_timeout` is used.
+
+### How It Works
+
+| Setting | Behavior |
+|---------|----------|
+| `statement_timeout` | Applied server-side via PostgreSQL/openGauss `SET statement_timeout` GUC. On timeout, the server returns SQLSTATE `57014` (`query_canceled`). |
+| `timeout_action = "cancel"` (default) | The connection is kept; the next tool call reuses it. |
+| `timeout_action = "disconnect"` | On timeout, the connection is forcibly recycled — the next tool call establishes a fresh connection. |
+| `connection_max_lifetime` | Connections are recycled after this duration regardless of timeouts, preventing state drift in long-running MCP sessions. Must be ≥ `statement_timeout` (validated at startup). |
+
+### Validation
+
+If both `statement_timeout` and `connection_max_lifetime` are set, `statement_timeout` must not exceed `connection_max_lifetime`. The server fails fast at startup with a clear error message if this constraint is violated.
+
 ## TLS Support
 
 `sslmode=` parameter in connection URLs or config files:

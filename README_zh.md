@@ -328,6 +328,76 @@ gaussdb-mcp --store-password 'Pr0dP@ss' --name prod --config ~/.gaussdb-mcp.toml
 }
 ```
 
+## 语句超时与连接生命周期
+
+`gaussdb-mcp` 支持可配置的 SQL 执行超时，防止失控查询阻塞 AI 助手会话。对 MCP 服务端和 CLI 均生效。
+
+### 配置（TOML）
+
+在配置文件中为每个连接设置超时参数：
+
+```toml
+[[connections]]
+name = "prod"
+host = "192.168.1.10"
+user = "admin"
+password = "keyring"
+dbname = "production"
+
+statement_timeout = "30s"              # 取消运行超过 30 秒的查询
+connection_max_lifetime = "10min"      # 每 10 分钟回收连接
+timeout_action = "cancel"              # "cancel"（默认）或 "disconnect"
+```
+
+也可作为全局默认值，被所有连接继承：
+
+```toml
+statement_timeout = "30s"
+connection_max_lifetime = "10min"
+timeout_action = "cancel"
+```
+
+支持的时长格式：纯整数（秒），或带后缀：`500ms`、`30s`、`5min`、`1h`、`2d`。
+
+### CLI
+
+```sh
+# 为单次 CLI 调用覆盖语句超时
+gaussdb-mcp cli --sql "SELECT pg_sleep(60)" --statement-timeout 5s
+
+# 超时后强制断开连接（下次调用时重建连接）
+gaussdb-mcp cli --sql "..." --statement-timeout 30s --timeout-action disconnect
+
+# 设置连接最大生命周期
+gaussdb-mcp cli --sql "..." --connection-max-lifetime 10min
+```
+
+### MCP 工具单次调用覆盖
+
+`execute_query` 和 `get_execution_plan` 接受可选的 `timeout_ms` 参数，为单次调用覆盖连接级默认值：
+
+```json
+{
+  "sql": "SELECT count(*) FROM huge_table",
+  "timeout_ms": 5000
+}
+```
+
+如省略 `timeout_ms`，则使用连接的全局 `statement_timeout`。
+
+### 工作原理
+
+| 设置 | 行为 |
+|------|------|
+| `statement_timeout` | 通过 PostgreSQL/openGauss 的 `SET statement_timeout` GUC 在服务端应用。超时后服务端返回 SQLSTATE `57014`（`query_canceled`）。 |
+| `timeout_action = "cancel"`（默认）| 连接保留，下次工具调用继续使用。 |
+| `timeout_action = "disconnect"` | 超时后强制回收连接，下次工具调用建立新连接。 |
+| `connection_max_lifetime` | 无论是否超时，连接在此时长后强制回收，防止长期运行的 MCP 会话中状态漂移。必须 ≥ `statement_timeout`（启动时校验）。 |
+
+### 校验规则
+
+同时设置 `statement_timeout` 和 `connection_max_lifetime` 时，`statement_timeout` 不得超过 `connection_max_lifetime`。启动时违反此约束将立即报错退出。
+
 ## TLS 支持
 
 连接 URL 或配置文件中的 `sslmode=` 参数：
