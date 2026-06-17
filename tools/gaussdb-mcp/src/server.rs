@@ -10,9 +10,12 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
+use crate::config::{TimeoutAction, TimeoutConfig};
+use tokio_opengauss::error::SqlState;
 use crate::connection;
 use crate::output;
 use crate::queries;
+use std::time::Instant;
 
 pub(crate) fn sqlstate_to_sqlcode(state: &str) -> i32 {
     match state {
@@ -309,6 +312,18 @@ fn query_error(tool: &str, sql: &str, err: &tokio_opengauss::Error) -> McpError 
             db_err.detail().unwrap_or("")
         );
 
+        // If this is a statement timeout, provide an actionable hint.
+        let hint = if db_err.code() == &SqlState::QUERY_CANCELED {
+            Some(
+                "Query exceeded the configured statement_timeout. \
+                 Options: increase the timeout, add timeout_ms to the tool call, \
+                 or optimize the query."
+                    .to_string(),
+            )
+        } else {
+            db_err.hint().map(String::from)
+        };
+
         let mut data = json!({
             "sqlstate": sqlstate,
             "sqlcode": sqlcode,
@@ -319,7 +334,7 @@ fn query_error(tool: &str, sql: &str, err: &tokio_opengauss::Error) -> McpError 
         if let Some(detail) = db_err.detail() {
             data["detail"] = json!(detail);
         }
-        if let Some(hint) = db_err.hint() {
+        if let Some(ref hint) = hint {
             data["hint"] = json!(hint);
         }
         if let Some(schema) = db_err.schema() {
@@ -374,6 +389,10 @@ pub struct GetTableMetadataParams {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ExecuteQueryParams {
     pub sql: String,
+    /// Optional per-call statement timeout in milliseconds. Overrides the
+    /// connection's global statement_timeout for this query only.
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
     #[serde(default)]
     pub connection_name: Option<String>,
 }
@@ -383,6 +402,9 @@ pub struct GetExecutionPlanParams {
     pub sql: String,
     pub analyze: Option<bool>,
     pub format: Option<String>,
+    /// Optional per-call statement timeout in milliseconds.
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
     #[serde(default)]
     pub connection_name: Option<String>,
 }
@@ -392,10 +414,15 @@ type CallbackFn = Arc<dyn Fn() + Send + Sync>;
 
 enum ConnectionState {
     Pending(ResolveFn),
-    Connecting(String),
+    Connecting {
+        url: String,
+        timeout_config: TimeoutConfig,
+    },
     Connected {
         client: Arc<tokio_opengauss::Client>,
         url: String,
+        timeout_config: TimeoutConfig,
+        connected_at: Instant,
     },
     Unavailable(String),
 }
@@ -404,24 +431,43 @@ pub struct GaussdbMcp {
     connections: Arc<Mutex<HashMap<String, ConnectionState>>>,
     default_name: String,
     on_connected: HashMap<String, CallbackFn>,
+    /// Timeout config per connection name. Set at construction time,
+    /// used when (re)establishing connections.
+    timeout_configs: HashMap<String, TimeoutConfig>,
 }
 
 impl GaussdbMcp {
     /// Create a multi-connection server with eager (pre-resolved) URLs.
-    pub fn new_multi_disconnected(entries: Vec<(String, String)>, default_name: String) -> Self {
+    pub fn new_multi_disconnected(
+        entries: Vec<(String, String)>,
+        default_name: String,
+        timeout_configs: HashMap<String, TimeoutConfig>,
+    ) -> Self {
         let mut connections = HashMap::new();
         for (name, url) in entries {
-            connections.insert(name, ConnectionState::Connecting(url));
+            let tc = timeout_configs.get(&name).cloned().unwrap_or_default();
+            connections.insert(
+                name,
+                ConnectionState::Connecting {
+                    url,
+                    timeout_config: tc,
+                },
+            );
         }
         Self {
             connections: Arc::new(Mutex::new(connections)),
             default_name,
             on_connected: HashMap::new(),
+            timeout_configs,
         }
     }
 
     /// Create a multi-connection server with lazy resolvers (deferred keychain reads).
-    pub fn new_multi_lazy(entries: Vec<(String, ResolveFn)>, default_name: String) -> Self {
+    pub fn new_multi_lazy(
+        entries: Vec<(String, ResolveFn)>,
+        default_name: String,
+        timeout_configs: HashMap<String, TimeoutConfig>,
+    ) -> Self {
         let mut connections = HashMap::new();
         for (name, resolver) in entries {
             connections.insert(name, ConnectionState::Pending(resolver));
@@ -430,13 +476,18 @@ impl GaussdbMcp {
             connections: Arc::new(Mutex::new(connections)),
             default_name,
             on_connected: HashMap::new(),
+            timeout_configs,
         }
     }
 
     /// Backward-compatible: single connection, eager URL.
     #[allow(dead_code)]
     pub fn new_disconnected(url: String) -> Self {
-        Self::new_multi_disconnected(vec![("default".to_string(), url)], "default".to_string())
+        Self::new_multi_disconnected(
+            vec![("default".to_string(), url)],
+            "default".to_string(),
+            HashMap::new(),
+        )
     }
 
     /// Backward-compatible: single connection, lazy resolver.
@@ -445,6 +496,7 @@ impl GaussdbMcp {
         Self::new_multi_lazy(
             vec![("default".to_string(), resolver)],
             "default".to_string(),
+            HashMap::new(),
         )
     }
 
@@ -456,12 +508,15 @@ impl GaussdbMcp {
             ConnectionState::Connected {
                 client: Arc::new(client),
                 url: String::new(),
+                timeout_config: TimeoutConfig::default(),
+                connected_at: Instant::now(),
             },
         );
         Self {
             connections: Arc::new(Mutex::new(connections)),
             default_name: "default".to_string(),
             on_connected: HashMap::new(),
+            timeout_configs: HashMap::new(),
         }
     }
 
@@ -480,16 +535,18 @@ impl GaussdbMcp {
 
     /// Probe the default connection at startup.
     pub async fn try_connect(&self) {
-        let (name, url) = {
+        let (name, url, tc) = {
             let conns = self.connections.lock().await;
             match conns.get(&self.default_name) {
-                Some(ConnectionState::Connecting(url)) => (self.default_name.clone(), url.clone()),
+                Some(ConnectionState::Connecting { url, timeout_config }) => {
+                    (self.default_name.clone(), url.clone(), timeout_config.clone())
+                }
                 _ => return,
             }
         };
 
         info!("probing database connection '{}' at startup", name);
-        let result = connection::do_connect(&url).await;
+        let result = connection::do_connect(&url, Some(&tc)).await;
 
         let mut conns = self.connections.lock().await;
         match result {
@@ -503,6 +560,8 @@ impl GaussdbMcp {
                     ConnectionState::Connected {
                         client,
                         url: url.clone(),
+                        timeout_config: tc,
+                        connected_at: Instant::now(),
                     },
                 );
             }
@@ -527,8 +586,33 @@ impl GaussdbMcp {
         let mut conns = self.connections.lock().await;
 
         match conns.get(&name) {
-            Some(ConnectionState::Connected { client, url }) => {
+            Some(ConnectionState::Connected {
+                client,
+                url,
+                timeout_config,
+                connected_at,
+            }) => {
                 if !client.is_closed() {
+                    // Check connection max lifetime.
+                    if let Some(max_lifetime) = timeout_config.connection_max_lifetime {
+                        if connected_at.elapsed() >= max_lifetime {
+                            info!(
+                                "connection '{}' exceeded max_lifetime ({:?}), recycling",
+                                name, max_lifetime
+                            );
+                            let url = url.clone();
+                            let tc = timeout_config.clone();
+                            conns.insert(
+                                name.clone(),
+                                ConnectionState::Connecting {
+                                    url: url.clone(),
+                                    timeout_config: tc,
+                                },
+                            );
+                            drop(conns);
+                            return self.connect_with_url(name, url).await;
+                        }
+                    }
                     return Ok(Arc::clone(client));
                 }
                 // Connection is dead — downgrade to Connecting so other
@@ -538,7 +622,14 @@ impl GaussdbMcp {
                     name
                 );
                 let url = url.clone();
-                conns.insert(name.clone(), ConnectionState::Connecting(url.clone()));
+                let tc = timeout_config.clone();
+                conns.insert(
+                    name.clone(),
+                    ConnectionState::Connecting {
+                        url: url.clone(),
+                        timeout_config: tc,
+                    },
+                );
                 drop(conns);
                 self.connect_with_url(name, url).await
             }
@@ -563,7 +654,8 @@ impl GaussdbMcp {
                 );
                 self.connect_with_url(name, url).await
             }
-            Some(ConnectionState::Connecting(url) | ConnectionState::Unavailable(url)) => {
+            Some(ConnectionState::Connecting { url, .. })
+            | Some(ConnectionState::Unavailable(url)) => {
                 let url = url.clone();
                 drop(conns);
                 info!("attempting database connection for '{}'", name);
@@ -594,7 +686,13 @@ impl GaussdbMcp {
         name: String,
         url: String,
     ) -> Result<Arc<tokio_opengauss::Client>, McpError> {
-        let result = connection::do_connect(&url).await;
+        let tc = self
+            .timeout_configs
+            .get(&name)
+            .cloned()
+            .unwrap_or_default();
+
+        let result = connection::do_connect(&url, Some(&tc)).await;
         let mut conns = self.connections.lock().await;
 
         match result {
@@ -608,6 +706,8 @@ impl GaussdbMcp {
                     ConnectionState::Connected {
                         client: Arc::clone(&client),
                         url: url.clone(),
+                        timeout_config: tc,
+                        connected_at: Instant::now(),
                     },
                 );
                 Ok(client)
@@ -624,13 +724,25 @@ impl GaussdbMcp {
     /// so the next tool call will reconnect automatically.
     async fn downgrade_on_error(&self, name: &str) {
         let mut conns = self.connections.lock().await;
-        if let Some(ConnectionState::Connected { url, .. }) = conns.get(name) {
+        if let Some(ConnectionState::Connected {
+            url,
+            timeout_config,
+            ..
+        }) = conns.get(name)
+        {
             let url = url.clone();
+            let tc = timeout_config.clone();
             info!(
                 "connection '{}' downgrading to Connecting after query error",
                 name
             );
-            conns.insert(name.to_string(), ConnectionState::Connecting(url));
+            conns.insert(
+                name.to_string(),
+                ConnectionState::Connecting {
+                    url,
+                    timeout_config: tc,
+                },
+            );
         }
     }
 
@@ -644,10 +756,71 @@ impl GaussdbMcp {
         tool: &str,
         sql: &str,
     ) -> McpError {
-        if err.as_db_error().is_none() {
+        // Distinguish three cases:
+        //  1) SQLSTATE 57014 (QUERY_CANCELED) + action=Disconnect → force reconnect
+        //  2) SQLSTATE 57014 + action=Cancel → return error, keep connection
+        //  3) Non-DB error (connection dropped) → always downgrade
+        let is_timeout = err
+            .as_db_error()
+            .is_some_and(|e| e.code() == &SqlState::QUERY_CANCELED);
+
+        if is_timeout {
+            let action = self
+                .timeout_configs
+                .get(name)
+                .map(|tc| tc.timeout_action)
+                .unwrap_or_default();
+            if action == TimeoutAction::Disconnect {
+                info!(
+                    "connection '{}' force-disconnecting after statement timeout (action=disconnect)",
+                    name
+                );
+                self.downgrade_on_error(name).await;
+            } else {
+                info!(
+                    "connection '{}' statement timed out, keeping connection (action=cancel)",
+                    name
+                );
+            }
+        } else if err.as_db_error().is_none() {
             self.downgrade_on_error(name).await;
         }
         query_error(tool, sql, &err)
+    }
+
+    /// Run a read-only query with an optional per-call statement timeout.
+    ///
+    /// When `timeout_ms` is set, temporarily sets the session-level
+    /// `statement_timeout` before the query and resets it to DEFAULT afterward.
+    ///
+    /// Since the tokio-opengauss `transaction()` API requires `&mut Client`
+    /// (which cannot be obtained from `&Client` behind `Arc`), we use
+    /// `simple_query` for the SET commands and `query` for the actual SQL.
+    ///
+    /// **Concurrency note:** Because this uses session-level SET (not
+    /// transaction-scoped SET LOCAL), two concurrent tool calls on the same
+    /// connection with different `timeout_ms` values could interfere. This is
+    /// acceptable because MCP protocol requests are processed sequentially per
+    /// connection in practice. If concurrent per-call overrides become needed,
+    /// wrap each call in a per-connection Mutex.
+    async fn query_with_optional_timeout(
+        client: &tokio_opengauss::Client,
+        sql: &str,
+        timeout_ms: Option<u64>,
+    ) -> Result<Vec<tokio_opengauss::Row>, tokio_opengauss::Error> {
+        match timeout_ms {
+            None => client.query(sql, &[]).await,
+            Some(ms) => {
+                // Temporarily set the session-level statement_timeout.
+                client
+                    .simple_query(&format!("SET statement_timeout={}", ms))
+                    .await?;
+                let result = client.query(sql, &[]).await;
+                // Best-effort reset of the timeout.
+                let _ = client.simple_query("SET statement_timeout=DEFAULT").await;
+                result
+            }
+        }
     }
 }
 
@@ -888,7 +1061,7 @@ impl GaussdbMcp {
             ));
         }
 
-        let rows = match client.query(trimmed, &[]).await {
+        let rows = match Self::query_with_optional_timeout(&client, trimmed, params.timeout_ms).await {
             Ok(rows) => rows,
             Err(e) => {
                 return Err(
@@ -961,7 +1134,7 @@ impl GaussdbMcp {
             format!("EXPLAIN (FORMAT {}) {}", format, params.sql)
         };
 
-        let rows = match client.query(&explain_sql, &[]).await {
+        let rows = match Self::query_with_optional_timeout(&client, &explain_sql, params.timeout_ms).await {
             Ok(rows) => rows,
             Err(e) => {
                 return Err(
@@ -1004,7 +1177,7 @@ impl GaussdbMcp {
             .map(|(name, state)| {
                 let status = match state {
                     ConnectionState::Connected { .. } => "connected",
-                    ConnectionState::Connecting(_) => "connecting",
+                    ConnectionState::Connecting { .. } => "connecting",
                     ConnectionState::Pending(_) => "pending",
                     ConnectionState::Unavailable(_) => "unavailable",
                 };
