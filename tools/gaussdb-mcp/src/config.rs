@@ -115,6 +115,14 @@ pub(crate) struct NamedConnection {
     pub(crate) password: Option<String>,
     pub(crate) dbname: Option<String>,
     pub(crate) sslmode: Option<String>,
+
+    /// Statement timeout (e.g. "30s", "5min"). Applied via SET statement_timeout after connect.
+    pub(crate) statement_timeout: Option<String>,
+    /// Connection max lifetime before forced reconnect (e.g. "10min").
+    pub(crate) connection_max_lifetime: Option<String>,
+    /// Action on timeout: "cancel" (default) or "disconnect".
+    #[serde(default)]
+    pub(crate) timeout_action: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +134,10 @@ pub(crate) struct MultiConfig {
     pub(crate) password: Option<String>,
     pub(crate) dbname: Option<String>,
     pub(crate) sslmode: Option<String>,
+
+    pub(crate) statement_timeout: Option<String>,
+    pub(crate) connection_max_lifetime: Option<String>,
+    pub(crate) timeout_action: Option<String>,
 
     pub(crate) default_connection: Option<String>,
     pub(crate) connections: Option<Vec<NamedConnection>>,
@@ -172,6 +184,20 @@ impl NamedConnection {
 
         Some(parts.join(" "))
     }
+
+    /// Build a TimeoutConfig from this connection's settings, inheriting
+    /// unset fields from `base` (typically the flat-level MultiConfig defaults).
+    pub(crate) fn timeout_config(
+        &self,
+        base: Option<&TimeoutConfig>,
+    ) -> Result<TimeoutConfig, String> {
+        TimeoutConfig::from_overrides(
+            self.statement_timeout.as_deref(),
+            self.connection_max_lifetime.as_deref(),
+            self.timeout_action.as_deref(),
+            base,
+        )
+    }
 }
 
 impl MultiConfig {
@@ -200,6 +226,9 @@ impl MultiConfig {
                     password: self.password,
                     dbname: self.dbname,
                     sslmode: self.sslmode,
+                    statement_timeout: self.statement_timeout,
+                    connection_max_lifetime: self.connection_max_lifetime,
+                    timeout_action: self.timeout_action,
                 };
                 Ok((vec![single], Some("default".to_string())))
             }
@@ -214,6 +243,8 @@ pub(crate) struct ResolvedConnection {
     pub(crate) plaintext_password: Option<String>,
     pub(crate) keyring_username: String,
     pub(crate) password_source: PasswordSource,
+    /// Timeout settings parsed from config.
+    pub(crate) timeout_config: TimeoutConfig,
 }
 
 pub(crate) enum LazyConnectionEntry {
@@ -316,6 +347,7 @@ pub(crate) fn find_config_path(config_path: Option<PathBuf>) -> Result<PathBuf, 
 pub(crate) fn resolve_single_connection(
     conn: &NamedConnection,
     config_path: Option<PathBuf>,
+    base_timeout: Option<&TimeoutConfig>,
 ) -> Result<ResolvedConnection, String> {
     let mut conn = conn.clone();
     let keyring_user = conn.keyring_username();
@@ -353,6 +385,8 @@ pub(crate) fn resolve_single_connection(
         )
     })?;
 
+    let timeout_config = conn.timeout_config(base_timeout)?;
+
     Ok(ResolvedConnection {
         name: conn.name.clone(),
         connection_url,
@@ -360,6 +394,7 @@ pub(crate) fn resolve_single_connection(
         plaintext_password,
         keyring_username: keyring_user,
         password_source,
+        timeout_config,
     })
 }
 
@@ -374,7 +409,7 @@ pub(crate) fn build_lazy_resolver(conn: &NamedConnection) -> Result<LazyConnecti
         .is_some_and(|p| p != KEYRING_SENTINEL);
 
     if is_plaintext || conn.url.is_some() {
-        let resolved = resolve_single_connection(&conn, None)?;
+        let resolved = resolve_single_connection(&conn, None, None)?;
         return Ok(LazyConnectionEntry::Ready(resolved));
     }
 
@@ -442,6 +477,7 @@ pub(crate) fn resolve_all_connections(
             plaintext_password: None,
             keyring_username: String::new(),
             password_source: PasswordSource::EnvVar,
+            timeout_config: TimeoutConfig::default(),
         };
         return Ok((vec![resolved], "default".to_string()));
     }
@@ -463,6 +499,16 @@ pub(crate) fn resolve_all_connections(
         )
     })?;
 
+    // Build flat-level base timeout config to inherit into named connections.
+    // Extract fields BEFORE resolve() consumes config.
+    let base_tc = TimeoutConfig::from_overrides(
+        config.statement_timeout.as_deref(),
+        config.connection_max_lifetime.as_deref(),
+        config.timeout_action.as_deref(),
+        None,
+    )
+    .ok();
+
     let (connections, default_name) = config.resolve()?;
     let default_name = default_name.unwrap_or_else(|| {
         connections
@@ -473,7 +519,11 @@ pub(crate) fn resolve_all_connections(
 
     let mut resolved = Vec::with_capacity(connections.len());
     for conn in &connections {
-        resolved.push(resolve_single_connection(conn, Some(config_path.clone()))?);
+        resolved.push(resolve_single_connection(
+            conn,
+            Some(config_path.clone()),
+            base_tc.as_ref(),
+        )?);
     }
 
     Ok((resolved, default_name))
@@ -490,6 +540,7 @@ pub(crate) fn resolve_all_connections_lazy(
             plaintext_password: None,
             keyring_username: String::new(),
             password_source: PasswordSource::EnvVar,
+            timeout_config: TimeoutConfig::default(),
         };
         return Ok((
             vec![LazyConnectionEntry::Ready(resolved)],
