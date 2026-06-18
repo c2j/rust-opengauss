@@ -411,7 +411,7 @@ gaussdb-mcp cli --sql "..." --connection-max-lifetime 10min
 
 | 设置 | 行为 |
 |------|------|
-| `statement_timeout` | 通过 PostgreSQL/openGauss 的 `SET statement_timeout` GUC 在服务端应用。超时后服务端返回 SQLSTATE `57014`（`query_canceled`）。 |
+| `statement_timeout` | 通过 PostgreSQL/openGauss 的 `SET statement_timeout` GUC 在服务端应用。超时后服务端返回 SQLSTATE `57014`（`query_canceled`）。**默认：600 秒**（未配置时）。 |
 | `timeout_action = "cancel"`（默认）| 连接保留，下次工具调用继续使用。 |
 | `timeout_action = "disconnect"` | 超时后强制回收连接，下次工具调用建立新连接。 |
 | `connection_max_lifetime` | 无论是否超时，连接在此时长后强制回收，防止长期运行的 MCP 会话中状态漂移。必须 ≥ `statement_timeout`（启动时校验）。 |

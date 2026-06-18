@@ -29,11 +29,23 @@ impl TimeoutAction {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct TimeoutConfig {
     pub(crate) statement_timeout: Option<Duration>,
     pub(crate) connection_max_lifetime: Option<Duration>,
     pub(crate) timeout_action: TimeoutAction,
+}
+
+pub(crate) const DEFAULT_STATEMENT_TIMEOUT_SECS: u64 = 600;
+
+impl Default for TimeoutConfig {
+    fn default() -> Self {
+        TimeoutConfig {
+            statement_timeout: Some(Duration::from_secs(DEFAULT_STATEMENT_TIMEOUT_SECS)),
+            connection_max_lifetime: None,
+            timeout_action: TimeoutAction::default(),
+        }
+    }
 }
 
 impl TimeoutConfig {
@@ -66,7 +78,10 @@ impl TimeoutConfig {
                 let d = crate::duration_parse::parse_duration(s)?;
                 Some(d)
             }
-            None => base.as_ref().and_then(|b| b.statement_timeout),
+            None => base
+                .as_ref()
+                .and_then(|b| b.statement_timeout)
+                .or_else(|| Some(Duration::from_secs(DEFAULT_STATEMENT_TIMEOUT_SECS))),
         };
 
         let connection_max_lifetime = match connection_max_lifetime {
@@ -706,5 +721,25 @@ mod timeout_tests {
         assert_eq!(config.statement_timeout, Some(Duration::from_secs(60)));
         assert_eq!(config.connection_max_lifetime, Some(Duration::from_secs(600)));
         assert_eq!(config.timeout_action, TimeoutAction::Disconnect);
+    }
+
+    #[test]
+    fn default_has_600s_statement_timeout() {
+        let config = TimeoutConfig::default();
+        assert_eq!(
+            config.statement_timeout,
+            Some(Duration::from_secs(DEFAULT_STATEMENT_TIMEOUT_SECS))
+        );
+        assert_eq!(config.connection_max_lifetime, None);
+        assert_eq!(config.timeout_action, TimeoutAction::Cancel);
+    }
+
+    #[test]
+    fn from_overrides_without_base_uses_600s_default() {
+        let config = TimeoutConfig::from_overrides(None, None, None, None).unwrap();
+        assert_eq!(
+            config.statement_timeout,
+            Some(Duration::from_secs(DEFAULT_STATEMENT_TIMEOUT_SECS))
+        );
     }
 }

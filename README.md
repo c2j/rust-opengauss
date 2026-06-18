@@ -411,7 +411,7 @@ If `timeout_ms` is omitted, the connection's global `statement_timeout` is used.
 
 | Setting | Behavior |
 |---------|----------|
-| `statement_timeout` | Applied server-side via PostgreSQL/openGauss `SET statement_timeout` GUC. On timeout, the server returns SQLSTATE `57014` (`query_canceled`). |
+| `statement_timeout` | Applied server-side via PostgreSQL/openGauss `SET statement_timeout` GUC. On timeout, the server returns SQLSTATE `57014` (`query_canceled`). **Default: 600s** when not configured. |
 | `timeout_action = "cancel"` (default) | The connection is kept; the next tool call reuses it. |
 | `timeout_action = "disconnect"` | On timeout, the connection is forcibly recycled — the next tool call establishes a fresh connection. |
 | `connection_max_lifetime` | Connections are recycled after this duration regardless of timeouts, preventing state drift in long-running MCP sessions. Must be ≥ `statement_timeout` (validated at startup). |
