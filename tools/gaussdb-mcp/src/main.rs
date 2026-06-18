@@ -643,7 +643,7 @@ async fn handle_check_connection(resolved: &ResolvedConnection, verbose: bool) {
             match check_keyring_available(&resolved.keyring_username) {
                 Ok(()) => {
                     eprintln!(
-                        "  ✓ OS keychain is available — password will be migrated on first MCP connection"
+                        "  ✓ OS keychain is available — password will be migrated on first successful connection"
                     );
                 }
                 Err(e) => {
