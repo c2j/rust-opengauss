@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use crate::config::{
-    read_config, resolve_env_var_connection, resolve_single_connection, TimeoutConfig,
+    read_config, resolve_env_var_connection, resolve_single_connection,
+    store_keyring_password, rewrite_password_to_sentinel, TimeoutConfig,
 };
 use crate::connection::do_connect;
 use crate::output::{format_row_value, format_table};
@@ -128,7 +129,24 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
         .await
         .map_err(|e| format!("Connection failed: {}", format_error_chain(e.as_ref())))?;
 
-    // 5. Execute SQL
+    // 6. Migrate plaintext password to OS keychain on successful connection
+    if let (Some(path), Some(plaintext)) = (&target.config_path, &target.plaintext_password) {
+        match store_keyring_password(&target.keyring_username, plaintext) {
+            Ok(()) => {
+                if let Err(e) = rewrite_password_to_sentinel(path) {
+                    eprintln!(
+                        "warning: password stored in keychain but failed to update config: {}",
+                        e
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("warning: failed to migrate password to keychain: {}", e);
+            }
+        }
+    }
+
+    // 7. Execute SQL
     let trimmed = sql.trim();
     let upper = trimmed.to_uppercase();
 

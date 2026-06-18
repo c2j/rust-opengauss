@@ -416,6 +416,7 @@ pub(crate) fn resolve_single_connection(
 
 pub(crate) fn build_lazy_resolver(
     conn: &NamedConnection,
+    config_path: Option<PathBuf>,
     base_timeout: Option<&TimeoutConfig>,
 ) -> Result<LazyConnectionEntry, String> {
     let conn = conn.clone();
@@ -428,7 +429,7 @@ pub(crate) fn build_lazy_resolver(
         .is_some_and(|p| p != KEYRING_SENTINEL);
 
     if is_plaintext || conn.url.is_some() {
-        let resolved = resolve_single_connection(&conn, None, base_timeout)?;
+        let resolved = resolve_single_connection(&conn, config_path, base_timeout)?;
         return Ok(LazyConnectionEntry::Ready(resolved));
     }
 
@@ -631,7 +632,7 @@ pub(crate) fn resolve_all_connections_lazy(
 
     let mut entries = Vec::with_capacity(connections.len());
     for conn in &connections {
-        entries.push(build_lazy_resolver(conn, base_tc.as_ref())?);
+        entries.push(build_lazy_resolver(conn, Some(config_path.clone()), base_tc.as_ref())?);
     }
 
     Ok((entries, default_name))
