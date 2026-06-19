@@ -1165,6 +1165,7 @@ dependencies = [
  "clap",
  "csv",
  "dirs",
+ "futures-util",
  "keyring",
  "native-tls",
  "opengauss-native-tls",

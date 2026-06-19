@@ -8,6 +8,8 @@ use crate::config::{
 use crate::connection::do_connect;
 use crate::output::{format_row_value, format_table};
 use crate::server::{format_error_chain, sqlstate_to_sqlcode};
+use futures_util::StreamExt;
+use tokio_opengauss::types::ToSql;
 
 fn format_sql_error(err: &tokio_opengauss::Error) -> String {
     if let Some(db_err) = err.as_db_error() {
@@ -37,6 +39,7 @@ fn format_sql_error(err: &tokio_opengauss::Error) -> String {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum OutputFormat {
     Table,
     Json,
@@ -156,89 +159,138 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
     let upper = trimmed.to_uppercase();
 
     if upper.starts_with("SELECT") || upper.starts_with("EXPLAIN") || upper.starts_with("WITH") {
-        let rows = client
-            .query(trimmed, &[])
-            .await
-            .map_err(|e| format!("Query failed: {}", format_sql_error(&e)))?;
-
-        if rows.is_empty() {
-            println!("(0 rows)");
-            return Ok(());
-        }
-
-        let columns: Vec<String> = rows[0]
-            .columns()
-            .iter()
-            .map(|c| c.name().to_string())
-            .collect();
-
-        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
-        for row in &rows {
-            let mut result_row: Vec<serde_json::Value> = Vec::new();
-            for idx in 0..row.len() {
-                result_row.push(format_row_value(row, idx));
-            }
-            result_rows.push(result_row);
-        }
-
+        let no_params: [&(dyn ToSql + Sync); 0] = [];
         match args.format {
-            OutputFormat::Table => {
-                println!("{}", format_table(&columns, &result_rows));
-                if rows.len() == 1 {
-                    println!("(1 row)");
-                } else {
-                    println!("({} rows)", rows.len());
-                }
-            }
-            OutputFormat::Json => {
-                let result = serde_json::json!({
-                    "columns": columns,
-                    "rows": result_rows,
-                    "row_count": rows.len(),
-                });
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string())
-                );
-            }
-            OutputFormat::Vertical => {
-                for (i, row) in result_rows.iter().enumerate() {
-                    println!("-[ RECORD {} ]-", i + 1);
-                    for (j, val) in row.iter().enumerate() {
-                        let val_str = match val {
-                            serde_json::Value::Null => "NULL".to_string(),
-                            v => v.to_string(),
-                        };
-                        println!("{} | {}", columns[j], val_str);
-                    }
-                }
-                if result_rows.len() == 1 {
-                    println!("(1 row)");
-                } else {
-                    println!("({} rows)", result_rows.len());
-                }
-            }
             OutputFormat::Csv => {
+                // O(1) memory: stream rows via query_raw instead of buffering.
+                let mut stream = std::pin::pin!(
+                    client
+                        .query_raw(trimmed, no_params)
+                        .await
+                        .map_err(|e| format!("Query failed: {}", format_sql_error(&e)))?
+                );
                 let stdout = std::io::stdout();
                 let mut wtr = csv::Writer::from_writer(stdout.lock());
-                wtr.write_record(&columns)
-                    .map_err(|e| format!("CSV write error: {}", e))?;
-                for row in &result_rows {
-                    let record: Vec<String> = row
-                        .iter()
-                        .map(|v| match v {
-                            // NULL → empty field (RFC 4180 / psql `\copy csv`).
-                            // Sibling branches render "NULL" literally; CSV must not.
+                let mut count = 0usize;
+                let mut header_written = false;
+
+                while let Some(row_result) = stream.next().await {
+                    let row = row_result
+                        .map_err(|e| format!("Query failed: {}", format_sql_error(&e)))?;
+                    if !header_written {
+                        let header: Vec<&str> = row.columns().iter().map(|c| c.name()).collect();
+                        wtr.write_record(&header)
+                            .map_err(|e| format!("CSV write error: {}", e))?;
+                        header_written = true;
+                    }
+                    let record: Vec<String> = (0..row.len())
+                        .map(|idx| match format_row_value(&row, idx) {
+                            // NULL → empty field (RFC 4180 / psql copy-csv).
                             serde_json::Value::Null => String::new(),
-                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::String(s) => s,
                             other => other.to_string(),
                         })
                         .collect();
                     wtr.write_record(&record)
                         .map_err(|e| format!("CSV write error: {}", e))?;
+                    count += 1;
                 }
-                // No "(N rows)" footer: output must be pure, parseable CSV.
                 wtr.flush().map_err(|e| format!("CSV flush error: {}", e))?;
+                if count == 0 {
+                    // stderr, not stdout: stdout is the pure CSV data stream.
+                    eprintln!("(0 rows)");
+                }
+            }
+            OutputFormat::Vertical => {
+                // O(1) memory: stream rows via query_raw instead of buffering.
+                let mut stream = std::pin::pin!(
+                    client
+                        .query_raw(trimmed, no_params)
+                        .await
+                        .map_err(|e| format!("Query failed: {}", format_sql_error(&e)))?
+                );
+                let mut count = 0usize;
+                let mut columns: Option<Vec<String>> = None;
+
+                while let Some(row_result) = stream.next().await {
+                    let row = row_result
+                        .map_err(|e| format!("Query failed: {}", format_sql_error(&e)))?;
+                    if columns.is_none() {
+                        columns =
+                            Some(row.columns().iter().map(|c| c.name().to_string()).collect());
+                    }
+                    let cols = columns.as_ref().unwrap();
+                    count += 1;
+                    println!("-[ RECORD {} ]-", count);
+                    for (idx, col_name) in cols.iter().enumerate() {
+                        let val = format_row_value(&row, idx);
+                        let val_str = match &val {
+                            serde_json::Value::Null => "NULL".to_string(),
+                            v => v.to_string(),
+                        };
+                        println!("{} | {}", col_name, val_str);
+                    }
+                }
+                if count == 0 {
+                    println!("(0 rows)");
+                } else if count == 1 {
+                    println!("(1 row)");
+                } else {
+                    println!("({} rows)", count);
+                }
+            }
+            OutputFormat::Table | OutputFormat::Json => {
+                // Buffered: table needs two passes (column widths), json needs
+                // {columns, rows, row_count}. Both inherently require full result
+                // set — impractical for very large exports, use csv/vertical instead.
+                let rows = client
+                    .query(trimmed, &[])
+                    .await
+                    .map_err(|e| format!("Query failed: {}", format_sql_error(&e)))?;
+
+                if rows.is_empty() {
+                    println!("(0 rows)");
+                    return Ok(());
+                }
+
+                let columns: Vec<String> = rows[0]
+                    .columns()
+                    .iter()
+                    .map(|c| c.name().to_string())
+                    .collect();
+
+                let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
+                for row in &rows {
+                    let mut result_row: Vec<serde_json::Value> = Vec::new();
+                    for idx in 0..row.len() {
+                        result_row.push(format_row_value(row, idx));
+                    }
+                    result_rows.push(result_row);
+                }
+
+                match args.format {
+                    OutputFormat::Table => {
+                        println!("{}", format_table(&columns, &result_rows));
+                        if rows.len() == 1 {
+                            println!("(1 row)");
+                        } else {
+                            println!("({} rows)", rows.len());
+                        }
+                    }
+                    OutputFormat::Json => {
+                        let result = serde_json::json!({
+                            "columns": columns,
+                            "rows": result_rows,
+                            "row_count": rows.len(),
+                        });
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&result)
+                                .unwrap_or_else(|_| result.to_string())
+                        );
+                    }
+                    _ => unreachable!(),
+                }
             }
         }
     } else {
