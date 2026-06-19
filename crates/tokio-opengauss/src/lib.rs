@@ -110,6 +110,7 @@
 //! | `with-bit-vec-0_8` | Enable support for the `bit-vec` crate. | [bit-vec](https://crates.io/crates/bit-vec) 0.8 | no |
 //! | `with-bit-vec-0_9` | Enable support for the `bit-vec` crate. | [bit-vec](https://crates.io/crates/bit-vec) 0.9 | no |
 //! | `with-chrono-0_4` | Enable support for the `chrono` crate. | [chrono](https://crates.io/crates/chrono) 0.4 | no |
+//! | `with-rust_decimal-1` | Enable support for the `rust_decimal` crate (NUMERIC type). | [rust_decimal](https://crates.io/crates/rust_decimal) 1.0 | no |
 //! | `with-cidr-0_3` | Enable support for the `cidr` crate. | [cidr](https://crates.io/crates/cidr) 0.3 | no |
 //! | `with-eui48-0_4` | Enable support for the 0.4 version of the `eui48` crate. This is deprecated and will be removed. | [eui48](https://crates.io/crates/eui48) 0.4 | no |
 //! | `with-eui48-1` | Enable support for the 1.0 version of the `eui48` crate. | [eui48](https://crates.io/crates/eui48) 1.0 | no |
