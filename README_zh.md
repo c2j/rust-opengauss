@@ -86,7 +86,7 @@ OPTIONS:
     -v, --verbose               显示详细连接信息（配合 --check-connection）
         --name <NAME>           目标连接名称
         --config <PATH>         配置文件路径
-        --format <FMT>          输出格式: table, json, vertical [默认: table]
+        --format <FMT>          输出格式: table, json, vertical, csv [默认: table]
         --statement-timeout     覆盖配置中的语句超时时间
 ```
 
@@ -101,6 +101,9 @@ gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 5" --format json
 
 # 垂直显示（类似 psql 的 \x）
 gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 5" --format vertical
+
+# CSV 导出（RFC 4180，流式输出到 stdout；重定向到文件即可保存）
+gaussdb-mcp cli --sql "SELECT * FROM users" --format csv > users.csv
 
 # 支持 DML/DDL 语句
 gaussdb-mcp cli --sql "INSERT INTO logs VALUES (1, 'hello')"
@@ -188,7 +191,7 @@ CLI:
     -f, --file <FILE>          从文件读取 SQL (或管道传入 stdin)
         --check-connection     测试连接而不执行 SQL
     -v, --verbose              显示详细连接信息（配合 --check-connection）
-        --format <FMT>         输出格式: table, json, vertical [默认: table]
+        --format <FMT>         输出格式: table, json, vertical, csv [默认: table]
         --statement-timeout    覆盖配置中的语句超时 (如 "30s")
         --connection-max-lifetime  连接回收间隔 (如 "10min")
         --timeout-action       "cancel" (默认) 或 "disconnect"

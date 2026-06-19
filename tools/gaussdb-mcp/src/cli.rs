@@ -41,6 +41,7 @@ pub(crate) enum OutputFormat {
     Table,
     Json,
     Vertical,
+    Csv,
 }
 
 impl FromStr for OutputFormat {
@@ -51,8 +52,9 @@ impl FromStr for OutputFormat {
             "table" => Ok(OutputFormat::Table),
             "json" => Ok(OutputFormat::Json),
             "vertical" => Ok(OutputFormat::Vertical),
+            "csv" => Ok(OutputFormat::Csv),
             _ => Err(format!(
-                "Unknown output format '{}'. Use table, json, or vertical.",
+                "Unknown output format '{}'. Use table, json, vertical, or csv.",
                 s
             )),
         }
@@ -215,6 +217,28 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
                 } else {
                     println!("({} rows)", result_rows.len());
                 }
+            }
+            OutputFormat::Csv => {
+                let stdout = std::io::stdout();
+                let mut wtr = csv::Writer::from_writer(stdout.lock());
+                wtr.write_record(&columns)
+                    .map_err(|e| format!("CSV write error: {}", e))?;
+                for row in &result_rows {
+                    let record: Vec<String> = row
+                        .iter()
+                        .map(|v| match v {
+                            // NULL → empty field (RFC 4180 / psql `\copy csv`).
+                            // Sibling branches render "NULL" literally; CSV must not.
+                            serde_json::Value::Null => String::new(),
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        })
+                        .collect();
+                    wtr.write_record(&record)
+                        .map_err(|e| format!("CSV write error: {}", e))?;
+                }
+                // No "(N rows)" footer: output must be pure, parseable CSV.
+                wtr.flush().map_err(|e| format!("CSV flush error: {}", e))?;
             }
         }
     } else {

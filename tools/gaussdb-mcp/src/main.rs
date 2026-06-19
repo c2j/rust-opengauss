@@ -78,7 +78,7 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
 
-        /// Output format: table, json, vertical
+        /// Output format: table, json, vertical, csv
         #[arg(long, default_value = "table")]
         format: String,
 
