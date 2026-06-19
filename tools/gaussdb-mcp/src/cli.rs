@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use crate::config::{
-    read_config, resolve_env_var_connection, resolve_single_connection,
-    store_keyring_password, rewrite_password_to_sentinel, TimeoutConfig,
+    TimeoutConfig, read_config, resolve_env_var_connection, resolve_single_connection,
+    rewrite_password_to_sentinel, store_keyring_password,
 };
 use crate::connection::do_connect;
 use crate::output::{format_row_value, format_table};
@@ -15,7 +15,9 @@ fn format_sql_error(err: &tokio_opengauss::Error) -> String {
         let sqlcode = sqlstate_to_sqlcode(sqlstate);
         let mut msg = format!(
             "[SQLSTATE {} | SQLCODE {}] {}",
-            sqlstate, sqlcode, db_err.message()
+            sqlstate,
+            sqlcode,
+            db_err.message()
         );
         if let Some(detail) = db_err.detail() {
             msg.push_str(&format!("\nDETAIL: {}", detail));
@@ -92,10 +94,7 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
     let raw = read_config(config_path)?;
 
     // 3. Find target connection by name, resolve only that one
-    let target_name = args
-        .connection_name
-        .as_deref()
-        .unwrap_or(&raw.default_name);
+    let target_name = args.connection_name.as_deref().unwrap_or(&raw.default_name);
 
     let target_conn = raw
         .connections
@@ -112,7 +111,11 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
     let target = if raw.is_env_var {
         resolve_env_var_connection(target_conn.url.clone().unwrap())
     } else {
-        resolve_single_connection(target_conn, raw.config_path.clone(), raw.base_timeout.as_ref())?
+        resolve_single_connection(
+            target_conn,
+            raw.config_path.clone(),
+            raw.base_timeout.as_ref(),
+        )?
     };
 
     // 4. Build effective TimeoutConfig: CLI overrides on top of config-file defaults.

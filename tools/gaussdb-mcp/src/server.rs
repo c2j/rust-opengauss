@@ -11,11 +11,11 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
 use crate::config::{TimeoutAction, TimeoutConfig};
-use tokio_opengauss::error::SqlState;
 use crate::connection;
 use crate::output;
 use crate::queries;
 use std::time::Instant;
+use tokio_opengauss::error::SqlState;
 
 pub(crate) fn sqlstate_to_sqlcode(state: &str) -> i32 {
     match state {
@@ -538,9 +538,14 @@ impl GaussdbMcp {
         let (name, url, tc) = {
             let conns = self.connections.lock().await;
             match conns.get(&self.default_name) {
-                Some(ConnectionState::Connecting { url, timeout_config }) => {
-                    (self.default_name.clone(), url.clone(), timeout_config.clone())
-                }
+                Some(ConnectionState::Connecting {
+                    url,
+                    timeout_config,
+                }) => (
+                    self.default_name.clone(),
+                    url.clone(),
+                    timeout_config.clone(),
+                ),
                 _ => return,
             }
         };
@@ -686,11 +691,7 @@ impl GaussdbMcp {
         name: String,
         url: String,
     ) -> Result<Arc<tokio_opengauss::Client>, McpError> {
-        let tc = self
-            .timeout_configs
-            .get(&name)
-            .cloned()
-            .unwrap_or_default();
+        let tc = self.timeout_configs.get(&name).cloned().unwrap_or_default();
 
         let result = connection::do_connect(&url, Some(&tc)).await;
         let mut conns = self.connections.lock().await;
@@ -846,10 +847,9 @@ impl GaussdbMcp {
         let row = match client.query_one(queries::DATABASE_INFO, &[]).await {
             Ok(row) => row,
             Err(e) => {
-                return Err(
-                    self.handle_query_error(&name, e, "get_database_info", queries::DATABASE_INFO)
-                        .await,
-                );
+                return Err(self
+                    .handle_query_error(&name, e, "get_database_info", queries::DATABASE_INFO)
+                    .await);
             }
         };
 
@@ -890,10 +890,9 @@ impl GaussdbMcp {
         let rows = match client.query(queries::LIST_TABLES, &[]).await {
             Ok(rows) => rows,
             Err(e) => {
-                return Err(
-                    self.handle_query_error(&name, e, "list_tables", queries::LIST_TABLES)
-                        .await,
-                );
+                return Err(self
+                    .handle_query_error(&name, e, "list_tables", queries::LIST_TABLES)
+                    .await);
             }
         };
 
@@ -1061,15 +1060,15 @@ impl GaussdbMcp {
             ));
         }
 
-        let rows = match Self::query_with_optional_timeout(&client, trimmed, params.timeout_ms).await {
-            Ok(rows) => rows,
-            Err(e) => {
-                return Err(
-                    self.handle_query_error(&name, e, "execute_query", trimmed)
-                        .await,
-                );
-            }
-        };
+        let rows =
+            match Self::query_with_optional_timeout(&client, trimmed, params.timeout_ms).await {
+                Ok(rows) => rows,
+                Err(e) => {
+                    return Err(self
+                        .handle_query_error(&name, e, "execute_query", trimmed)
+                        .await);
+                }
+            };
 
         if rows.is_empty() {
             return Ok(CallToolResult::success(vec![Content::text(
@@ -1134,13 +1133,14 @@ impl GaussdbMcp {
             format!("EXPLAIN (FORMAT {}) {}", format, params.sql)
         };
 
-        let rows = match Self::query_with_optional_timeout(&client, &explain_sql, params.timeout_ms).await {
+        let rows = match Self::query_with_optional_timeout(&client, &explain_sql, params.timeout_ms)
+            .await
+        {
             Ok(rows) => rows,
             Err(e) => {
-                return Err(
-                    self.handle_query_error(&name, e, "get_execution_plan", &explain_sql)
-                        .await,
-                );
+                return Err(self
+                    .handle_query_error(&name, e, "get_execution_plan", &explain_sql)
+                    .await);
             }
         };
 

@@ -1,9 +1,9 @@
 mod cli;
 mod config;
 mod connection;
+mod duration_parse;
 mod output;
 mod queries;
-mod duration_parse;
 mod server;
 
 use clap::{Parser, Subcommand};
@@ -13,9 +13,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{error, info, warn};
 #[cfg(target_os = "linux")]
 use tracing::debug;
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use crate::config::{
@@ -217,13 +217,19 @@ fn handle_store_password(password: String, name: Option<String>, config_path: Op
             })
     } else {
         let default = default_name.unwrap_or_else(|| {
-            connections.first().map(|c| c.name.clone()).unwrap_or_default()
+            connections
+                .first()
+                .map(|c| c.name.clone())
+                .unwrap_or_default()
         });
         connections
             .iter()
             .find(|c| c.name == default)
             .unwrap_or_else(|| {
-                eprintln!("error: default connection '{}' not found in config", default);
+                eprintln!(
+                    "error: default connection '{}' not found in config",
+                    default
+                );
                 std::process::exit(1);
             })
     };
@@ -872,11 +878,15 @@ async fn handle_check_connection_cmd(
     let resolved = if raw.is_env_var {
         resolve_env_var_connection(target_conn.url.clone().unwrap())
     } else {
-        resolve_single_connection(target_conn, raw.config_path.clone(), raw.base_timeout.as_ref())
-            .unwrap_or_else(|e| {
-                eprintln!("error: {}", e);
-                std::process::exit(1);
-            })
+        resolve_single_connection(
+            target_conn,
+            raw.config_path.clone(),
+            raw.base_timeout.as_ref(),
+        )
+        .unwrap_or_else(|e| {
+            eprintln!("error: {}", e);
+            std::process::exit(1);
+        })
     };
 
     handle_check_connection(&resolved, verbose).await;
@@ -1125,8 +1135,7 @@ async fn main() {
                 let config_path = cli.config.map(PathBuf::from);
                 handle_check_connection_cmd(cli.name, verbose, config_path).await;
             } else {
-                let fmt: cli::OutputFormat =
-                    format.parse().unwrap_or(cli::OutputFormat::Table);
+                let fmt: cli::OutputFormat = format.parse().unwrap_or(cli::OutputFormat::Table);
                 let args = cli::CliArgs {
                     sql,
                     file,

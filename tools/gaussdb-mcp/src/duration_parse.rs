@@ -52,10 +52,7 @@ pub(crate) fn parse_duration(s: &str) -> Result<Duration, String> {
 
     match millis {
         Some(ms) => Ok(Duration::from_millis(ms)),
-        None => Err(format!(
-            "value '{}' in duration '{}' overflows",
-            num_str, s
-        )),
+        None => Err(format!("value '{}' in duration '{}' overflows", num_str, s)),
     }
 }
 
