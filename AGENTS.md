@@ -31,8 +31,14 @@ CI uses `RUSTFLAGS: -Dwarnings`, so any clippy warning is a hard error.
 cargo test -p gaussdb-mcp          # MCP tool unit tests (no DB required)
 ```
 
-> Full `cargo test --all` requires a running openGauss/PostgreSQL instance via `docker compose up -d`.
-> Run it locally if available; otherwise the `-p gaussdb-mcp` subset is sufficient for pre-commit.
+> `cargo test --all` (default features) does **not** require a DB — the
+> tokio-opengauss integration tests are gated behind the `integration` feature.
+> To run the full suite including DB integration tests:
+>
+> ```sh
+> docker compose up -d
+> cargo test -p tokio-opengauss --features integration
+> ```
 
 ## CI Pipeline
 
@@ -43,7 +49,7 @@ Workflow: `.github/workflows/ci.yml`
 | rustfmt | `cargo fmt --all -- --check` | Stable toolchain |
 | clippy | `cargo clippy --all --all-targets` | `RUSTFLAGS: -Dwarnings` |
 | check-wasm32 | `cargo check --target wasm32-unknown-unknown` | tokio-opengauss WASM compat |
-| test | `cargo test --all` + feature variants | Requires Docker DB |
+| test | `cargo test --all` + feature variants | Docker DB only needed for `--features integration` / `--all-features` |
 
 CI triggers on push to `main` and PRs targeting `main`.
 

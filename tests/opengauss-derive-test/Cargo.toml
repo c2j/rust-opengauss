@@ -5,6 +5,10 @@ authors = ["Steven Fackler <sfackler@gmail.com>"]
 edition = "2024"
 rust-version = "1.85"
 
+[features]
+## Gates integration tests requiring a live DB (127.0.0.1:5433 via docker compose).
+integration = []
+
 [dev-dependencies]
 trybuild = "1.0.18"
 

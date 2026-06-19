@@ -107,4 +107,4 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - run: cargo test --all
       - run: cargo test --manifest-path crates/tokio-opengauss/Cargo.toml --no-default-features
-      - run: cargo test --manifest-path crates/tokio-opengauss/Cargo.toml --all-features
+      - run: cargo test --all --all-features

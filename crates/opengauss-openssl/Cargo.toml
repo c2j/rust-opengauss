@@ -12,6 +12,7 @@ rust-version = "1.85"
 [features]
 default = ["runtime"]
 runtime = ["tokio-opengauss/runtime"]
+integration = []
 
 [dependencies]
 openssl = "0.10"
