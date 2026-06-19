@@ -86,7 +86,7 @@ OPTIONS:
     -v, --verbose               Show detailed connection info (with --check-connection)
         --name <NAME>           Target connection name
         --config <PATH>         Path to config file
-        --format <FMT>          Output format: table, json, vertical [default: table]
+        --format <FMT>          Output format: table, json, vertical, csv [default: table]
         --statement-timeout     Override config statement timeout
 ```
 
@@ -101,6 +101,9 @@ gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 5" --format json
 
 # Vertical display (like \x in psql)
 gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 5" --format vertical
+
+# CSV export (RFC 4180, streaming to stdout; redirect to a file to save)
+gaussdb-mcp cli --sql "SELECT * FROM users" --format csv > users.csv
 
 # DML/DDL supported
 gaussdb-mcp cli --sql "INSERT INTO logs VALUES (1, 'hello')"
@@ -188,7 +191,7 @@ CLI:
     -f, --file <FILE>          Read SQL from file (or pipe to stdin)
         --check-connection     Test connectivity without executing SQL
     -v, --verbose              Show detailed connection info (with --check-connection)
-        --format <FMT>         Output format: table, json, vertical [default: table]
+        --format <FMT>         Output format: table, json, vertical, csv [default: table]
         --statement-timeout    Override config statement timeout (e.g. "30s")
         --connection-max-lifetime  Connection recycle interval (e.g. "10min")
         --timeout-action       "cancel" (default) or "disconnect"
