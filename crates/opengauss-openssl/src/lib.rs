@@ -70,7 +70,7 @@ use tokio_opengauss::tls::MakeTlsConnect;
 use tokio_opengauss::tls::{ChannelBinding, TlsConnect};
 use tokio_openssl::SslStream;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "integration"))]
 mod test;
 
 type ConfigCallback =

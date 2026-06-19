@@ -107,5 +107,5 @@ mod row_iter;
 mod transaction;
 mod transaction_builder;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "integration"))]
 mod test;

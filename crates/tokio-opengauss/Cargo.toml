@@ -24,6 +24,9 @@ all-features = true
 [features]
 default = ["runtime"]
 runtime = ["tokio/net", "tokio/time"]
+## Gates integration tests requiring a live DB (127.0.0.1:5433 via docker compose).
+## Off by default; enable with `--features integration` or `--all-features`.
+integration = []
 
 array-impls = ["opengauss-types/array-impls"]
 with-bit-vec-0_6 = ["opengauss-types/with-bit-vec-0_6"]

@@ -64,7 +64,7 @@ use tokio_opengauss::tls;
 use tokio_opengauss::tls::MakeTlsConnect;
 use tokio_opengauss::tls::{ChannelBinding, TlsConnect};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "integration"))]
 mod test;
 
 /// A `MakeTlsConnect` implementation using the `native-tls` crate.

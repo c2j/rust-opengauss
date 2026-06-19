@@ -1,14 +1,22 @@
 #![cfg(test)]
 
+#[cfg(feature = "integration")]
 use opengauss::Client;
+#[cfg(feature = "integration")]
 use opengauss_types::{FromSqlOwned, ToSql};
+#[cfg(feature = "integration")]
 use std::fmt;
 
+#[cfg(feature = "integration")]
 mod composites;
+#[cfg(feature = "integration")]
 mod domains;
+#[cfg(feature = "integration")]
 mod enums;
+#[cfg(feature = "integration")]
 mod transparent;
 
+#[cfg(feature = "integration")]
 pub fn test_type<T, S>(conn: &mut Client, sql_type: &str, checks: &[(T, S)])
 where
     T: PartialEq + FromSqlOwned + ToSql + Sync,
@@ -27,6 +35,7 @@ where
     }
 }
 
+#[cfg(feature = "integration")]
 pub fn test_type_asymmetric<T, F, S, C>(
     conn: &mut Client,
     sql_type: &str,
