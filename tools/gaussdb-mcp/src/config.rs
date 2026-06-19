@@ -94,9 +94,7 @@ impl TimeoutConfig {
 
         let timeout_action = match timeout_action {
             Some(s) => TimeoutAction::from_str(s)?,
-            None => base
-                .map(|b| b.timeout_action)
-                .unwrap_or_default(),
+            None => base.map(|b| b.timeout_action).unwrap_or_default(),
         };
 
         let config = TimeoutConfig {
@@ -632,7 +630,11 @@ pub(crate) fn resolve_all_connections_lazy(
 
     let mut entries = Vec::with_capacity(connections.len());
     for conn in &connections {
-        entries.push(build_lazy_resolver(conn, Some(config_path.clone()), base_tc.as_ref())?);
+        entries.push(build_lazy_resolver(
+            conn,
+            Some(config_path.clone()),
+            base_tc.as_ref(),
+        )?);
     }
 
     Ok((entries, default_name))
@@ -679,13 +681,34 @@ mod timeout_tests {
 
     #[test]
     fn timeout_action_parses_aliases() {
-        assert_eq!(TimeoutAction::from_str("cancel").unwrap(), TimeoutAction::Cancel);
-        assert_eq!(TimeoutAction::from_str("CANCEL").unwrap(), TimeoutAction::Cancel);
-        assert_eq!(TimeoutAction::from_str("keep").unwrap(), TimeoutAction::Cancel);
-        assert_eq!(TimeoutAction::from_str("disconnect").unwrap(), TimeoutAction::Disconnect);
-        assert_eq!(TimeoutAction::from_str("DISCONNECT").unwrap(), TimeoutAction::Disconnect);
-        assert_eq!(TimeoutAction::from_str("drop").unwrap(), TimeoutAction::Disconnect);
-        assert_eq!(TimeoutAction::from_str("reconnect").unwrap(), TimeoutAction::Disconnect);
+        assert_eq!(
+            TimeoutAction::from_str("cancel").unwrap(),
+            TimeoutAction::Cancel
+        );
+        assert_eq!(
+            TimeoutAction::from_str("CANCEL").unwrap(),
+            TimeoutAction::Cancel
+        );
+        assert_eq!(
+            TimeoutAction::from_str("keep").unwrap(),
+            TimeoutAction::Cancel
+        );
+        assert_eq!(
+            TimeoutAction::from_str("disconnect").unwrap(),
+            TimeoutAction::Disconnect
+        );
+        assert_eq!(
+            TimeoutAction::from_str("DISCONNECT").unwrap(),
+            TimeoutAction::Disconnect
+        );
+        assert_eq!(
+            TimeoutAction::from_str("drop").unwrap(),
+            TimeoutAction::Disconnect
+        );
+        assert_eq!(
+            TimeoutAction::from_str("reconnect").unwrap(),
+            TimeoutAction::Disconnect
+        );
         let err = TimeoutAction::from_str("invalid").unwrap_err();
         assert!(!err.is_empty(), "error message should not be empty");
     }
@@ -720,7 +743,10 @@ mod timeout_tests {
         )
         .unwrap();
         assert_eq!(config.statement_timeout, Some(Duration::from_secs(60)));
-        assert_eq!(config.connection_max_lifetime, Some(Duration::from_secs(600)));
+        assert_eq!(
+            config.connection_max_lifetime,
+            Some(Duration::from_secs(600))
+        );
         assert_eq!(config.timeout_action, TimeoutAction::Disconnect);
     }
 

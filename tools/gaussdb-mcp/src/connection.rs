@@ -39,7 +39,8 @@ pub(crate) async fn do_connect(
                 if let Err(e) = client.batch_execute(&set_sql).await {
                     tracing::warn!(
                         "failed to apply statement_timeout={}ms for new connection: {}",
-                        ms, e
+                        ms,
+                        e
                     );
                 } else {
                     tracing::info!("applied statement_timeout={}ms to new connection", ms);
@@ -65,7 +66,8 @@ pub(crate) async fn do_connect(
                 if let Err(e) = client.batch_execute(&set_sql).await {
                     tracing::warn!(
                         "failed to apply statement_timeout={}ms for new connection: {}",
-                        ms, e
+                        ms,
+                        e
                     );
                 } else {
                     tracing::info!("applied statement_timeout={}ms to new connection", ms);
