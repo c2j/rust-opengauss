@@ -463,9 +463,75 @@ mod tests {
     fn accepts_only_numeric() {
         use crate::FromSql;
         assert!(<Decimal as FromSql>::accepts(&Type::NUMERIC));
-        assert!(!<Decimal as FromSql>::accepts(&Type::INT4));
-        assert!(!<Decimal as FromSql>::accepts(&Type::TEXT));
-        assert!(!<Decimal as FromSql>::accepts(&Type::FLOAT8));
-        assert!(!<Decimal as FromSql>::accepts(&Type::VARCHAR));
+        // Exhaustive negative coverage: a future widening of the accepts!
+        // macro (e.g. accidentally matching all numeric-ish types) would
+        // cause silent miscoding at runtime, so every common type is pinned.
+        for ty in [
+            Type::INT2,
+            Type::INT4,
+            Type::INT8,
+            Type::FLOAT4,
+            Type::FLOAT8,
+            Type::OID,
+            Type::TEXT,
+            Type::VARCHAR,
+            Type::BPCHAR,
+            Type::BOOL,
+            Type::BYTEA,
+            Type::UUID,
+            Type::JSON,
+            Type::JSONB,
+            Type::DATE,
+            Type::TIME,
+            Type::TIMESTAMP,
+            Type::TIMESTAMPTZ,
+        ] {
+            assert!(
+                !<Decimal as FromSql>::accepts(&ty),
+                "Decimal::accepts should be false for {ty:?}"
+            );
+        }
+    }
+
+    // Boundary cases guarding the NUMERIC binary parser against edge cases
+    // that are cheap to verify locally (no DB needed). Each test roundtrips
+    // a Decimal at the indicated extreme through the parser.
+
+    #[test]
+    fn roundtrip_large_integer_high_weight() {
+        // 10^12 — multiple base-10000 groups with positive weight
+        let val = Decimal::from_str("1000000000000").unwrap();
+        let bytes = dec_to_bytes(&val);
+        let back = Decimal::from_sql(&Type::NUMERIC, &bytes).unwrap();
+        assert_eq!(val, back);
+    }
+
+    #[test]
+    fn roundtrip_tiny_fraction_negative_weight() {
+        // 10^-12 — multiple leading-zero groups with negative weight
+        let val = Decimal::from_str("0.000000000001").unwrap();
+        let bytes = dec_to_bytes(&val);
+        let back = Decimal::from_sql(&Type::NUMERIC, &bytes).unwrap();
+        assert_eq!(val, back);
+    }
+
+    #[test]
+    fn roundtrip_max_scale_28_digits() {
+        // rust_decimal max scale is 28 decimal places; this exercises the
+        // full mantissa width and confirms no truncation.
+        let val = Decimal::from_str("1.1234567890123456789012345678").unwrap();
+        assert_eq!(val.scale(), 28);
+        let bytes = dec_to_bytes(&val);
+        let back = Decimal::from_sql(&Type::NUMERIC, &bytes).unwrap();
+        assert_eq!(val, back);
+    }
+
+    #[test]
+    fn roundtrip_decimal_max_value() {
+        // Decimal::MAX — 79228162514264337593543950335 (96-bit unsigned max).
+        let val = Decimal::MAX;
+        let bytes = dec_to_bytes(&val);
+        let back = Decimal::from_sql(&Type::NUMERIC, &bytes).unwrap();
+        assert_eq!(val, back);
     }
 }

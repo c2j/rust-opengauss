@@ -13,6 +13,10 @@ path = "src/main.rs"
 [features]
 default = []
 full = []
+## Gates tests requiring a live DB at GAUSSDB_TEST_URL
+## (or default host=127.0.0.1 port=5432 user=gaussdb).
+## Off by default; enable with `--features integration` or `--all-features`.
+integration = []
 
 [dependencies]
 csv = "1"
