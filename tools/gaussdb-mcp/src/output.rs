@@ -2,6 +2,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde_json::{Value, json};
 use std::error::Error;
+use std::net::IpAddr;
 use tokio_opengauss::Row;
 use tokio_opengauss::types::{FromSql, Type};
 
@@ -26,83 +27,165 @@ impl<'a> FromSql<'a> for RawBytes<'a> {
 }
 
 pub(crate) fn format_row_value(row: &Row, idx: usize) -> Value {
-    let col_type = row.columns()[idx].type_();
-    match *col_type {
+    format_value_with_type(row, idx, row.columns()[idx].type_())
+}
+
+/// Type-explicit variant so streaming callers (CSV/Vertical) can hoist the
+/// column-type lookup out of the inner cell loop and reuse one `&Type`
+/// reference per column across all rows.
+pub(crate) fn format_value_with_type(row: &Row, idx: usize, ty: &Type) -> Value {
+    match *ty {
         Type::VARCHAR | Type::TEXT | Type::BPCHAR | Type::NAME | Type::UNKNOWN => {
-            match row.try_get::<_, Option<String>>(idx) {
-                Ok(Some(s)) => Value::String(s),
-                Ok(None) => Value::Null,
-                Err(_) => Value::Null,
-            }
+            typed_or_raw(row, idx, ty, |r, i| {
+                match r.try_get::<_, Option<String>>(i) {
+                    Ok(Some(s)) => Some(Value::String(s)),
+                    Ok(None) => Some(Value::Null),
+                    Err(_) => None,
+                }
+            })
         }
-        Type::INT2 => match row.try_get::<_, Option<i16>>(idx) {
-            Ok(Some(v)) => json!(v),
-            _ => Value::Null,
-        },
+        Type::INT2 => typed_or_raw(row, idx, ty, |r, i| {
+            r.try_get::<_, Option<i16>>(i)
+                .ok()
+                .map(|v| v.map(|x| json!(x)).unwrap_or(Value::Null))
+        }),
         Type::INT4 | Type::OID | Type::REGPROC | Type::REGTYPE => {
-            match row.try_get::<_, Option<i32>>(idx) {
-                Ok(Some(v)) => json!(v),
-                _ => Value::Null,
-            }
+            typed_or_raw(row, idx, ty, |r, i| {
+                r.try_get::<_, Option<i32>>(i)
+                    .ok()
+                    .map(|v| v.map(|x| json!(x)).unwrap_or(Value::Null))
+            })
         }
-        Type::INT8 | Type::REGCLASS => match row.try_get::<_, Option<i64>>(idx) {
-            Ok(Some(v)) => json!(v),
-            _ => Value::Null,
-        },
-        Type::FLOAT4 => match row.try_get::<_, Option<f32>>(idx) {
-            Ok(Some(v)) => json!(v),
-            _ => Value::Null,
-        },
-        Type::FLOAT8 => match row.try_get::<_, Option<f64>>(idx) {
-            Ok(Some(v)) => json!(v),
-            _ => Value::Null,
-        },
-        Type::NUMERIC => match row.try_get::<_, Option<Decimal>>(idx) {
-            Ok(Some(d)) => decimal_to_json(d),
-            Ok(None) => Value::Null,
-            Err(_) => Value::Null,
-        },
-        Type::BOOL => match row.try_get::<_, Option<bool>>(idx) {
-            Ok(Some(v)) => json!(v),
-            _ => Value::Null,
-        },
-        Type::BYTEA => match row.try_get::<_, Option<&[u8]>>(idx) {
-            Ok(Some(b)) => Value::String(format!("\\x{}", hex_bytes(b))),
-            Ok(None) => Value::Null,
-            Err(_) => Value::Null,
-        },
-        Type::UUID => match row.try_get::<_, Option<uuid::Uuid>>(idx) {
-            Ok(Some(u)) => Value::String(u.to_string()),
-            Ok(None) => Value::Null,
-            Err(_) => Value::Null,
-        },
-        Type::JSON | Type::JSONB => match row.try_get::<_, Option<Value>>(idx) {
-            Ok(Some(v)) => v,
-            Ok(None) => Value::Null,
-            Err(_) => Value::Null,
-        },
-        Type::TIMESTAMP | Type::TIMESTAMPTZ => {
-            match row.try_get::<_, Option<chrono::NaiveDateTime>>(idx) {
-                Ok(Some(v)) => Value::String(v.to_string()),
-                Ok(None) => Value::Null,
-                Err(_) => Value::Null,
+        Type::INT8 | Type::REGCLASS => typed_or_raw(row, idx, ty, |r, i| {
+            r.try_get::<_, Option<i64>>(i)
+                .ok()
+                .map(|v| v.map(|x| json!(x)).unwrap_or(Value::Null))
+        }),
+        Type::FLOAT4 => typed_or_raw(row, idx, ty, |r, i| {
+            r.try_get::<_, Option<f32>>(i)
+                .ok()
+                .map(|v| v.map(|x| json!(x)).unwrap_or(Value::Null))
+        }),
+        Type::FLOAT8 => typed_or_raw(row, idx, ty, |r, i| {
+            r.try_get::<_, Option<f64>>(i)
+                .ok()
+                .map(|v| v.map(|x| json!(x)).unwrap_or(Value::Null))
+        }),
+        Type::NUMERIC => typed_or_raw(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<Decimal>>(i) {
+                Ok(Some(d)) => Some(decimal_to_json(d)),
+                Ok(None) => Some(Value::Null),
+                Err(_) => None,
             }
+        }),
+        Type::BOOL => typed_or_raw(row, idx, ty, |r, i| match r.try_get::<_, Option<bool>>(i) {
+            Ok(Some(v)) => Some(json!(v)),
+            Ok(None) => Some(Value::Null),
+            Err(_) => None,
+        }),
+        Type::BYTEA => typed_or_raw(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<&[u8]>>(i) {
+                Ok(Some(b)) => Some(Value::String(format!("\\x{}", hex_bytes(b)))),
+                Ok(None) => Some(Value::Null),
+                Err(_) => None,
+            }
+        }),
+        Type::UUID => typed_or_raw(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<uuid::Uuid>>(i) {
+                Ok(Some(u)) => Some(Value::String(u.to_string())),
+                Ok(None) => Some(Value::Null),
+                Err(_) => None,
+            }
+        }),
+        Type::JSON | Type::JSONB => typed_or_raw(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<Value>>(i) {
+                Ok(Some(v)) => Some(v),
+                Ok(None) => Some(Value::Null),
+                Err(_) => None,
+            }
+        }),
+        Type::TIMESTAMP | Type::TIMESTAMPTZ => typed_or_raw(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<chrono::NaiveDateTime>>(i) {
+                Ok(Some(v)) => Some(Value::String(v.to_string())),
+                Ok(None) => Some(Value::Null),
+                Err(_) => None,
+            }
+        }),
+        Type::DATE => typed_or_raw(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<chrono::NaiveDate>>(i) {
+                Ok(Some(v)) => Some(Value::String(v.to_string())),
+                Ok(None) => Some(Value::Null),
+                Err(_) => None,
+            }
+        }),
+        Type::TIME | Type::TIMETZ => typed_or_raw(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<chrono::NaiveTime>>(i) {
+                Ok(Some(v)) => Some(Value::String(v.to_string())),
+                Ok(None) => Some(Value::Null),
+                Err(_) => None,
+            }
+        }),
+        Type::INET | Type::CIDR => typed_or_raw(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<IpAddr>>(i) {
+                Ok(Some(ip)) => Some(Value::String(ip.to_string())),
+                Ok(None) => Some(Value::Null),
+                Err(_) => None,
+            }
+        }),
+        Type::MACADDR => typed_or_raw(row, idx, ty, |r, i| match r.try_get::<_, RawBytes>(i) {
+            Ok(RawBytes(Some(b))) if b.len() == 6 => Some(Value::String(format!(
+                "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                b[0], b[1], b[2], b[3], b[4], b[5]
+            ))),
+            Ok(RawBytes(None)) => Some(Value::Null),
+            _ => None,
+        }),
+        Type::MACADDR8 => typed_or_raw(row, idx, ty, |r, i| match r.try_get::<_, RawBytes>(i) {
+            Ok(RawBytes(Some(b))) if b.len() == 8 => Some(Value::String(format!(
+                "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]
+            ))),
+            Ok(RawBytes(None)) => Some(Value::Null),
+            _ => None,
+        }),
+        Type::INTERVAL => typed_or_raw(row, idx, ty, |r, i| match r.try_get::<_, RawBytes>(i) {
+            Ok(RawBytes(Some(b))) => Some(Value::String(format_interval(b))),
+            Ok(RawBytes(None)) => Some(Value::Null),
+            _ => None,
+        }),
+        _ => raw_bytes_fallback(row, idx, ty),
+    }
+}
+
+/// Dispatch helper: try the typed extraction first; if it returns None
+/// (meaning the typed FromSql failed), fall through to a raw-bytes
+/// placeholder rather than dropping the value to NULL. This closes the
+/// last loophole through which silent data loss could recur on a known
+/// type whose decoder happens to reject a particular value (e.g. a
+/// NUMERIC column with scale > 28 that rust_decimal cannot represent).
+fn typed_or_raw<F>(row: &Row, idx: usize, ty: &Type, extract: F) -> Value
+where
+    F: Fn(&Row, usize) -> Option<Value>,
+{
+    match extract(row, idx) {
+        Some(v) => v,
+        None => raw_bytes_fallback(row, idx, ty),
+    }
+}
+
+fn raw_bytes_fallback(row: &Row, idx: usize, ty: &Type) -> Value {
+    match row.try_get::<_, RawBytes>(idx) {
+        Ok(RawBytes(Some(b))) => {
+            tracing::warn!(
+                type_name = ty.name(),
+                column_index = idx,
+                bytes_len = b.len(),
+                "unsupported column type, emitting hex fallback"
+            );
+            Value::String(format_unsupported_type(ty.name(), b))
         }
-        Type::DATE => match row.try_get::<_, Option<chrono::NaiveDate>>(idx) {
-            Ok(Some(v)) => Value::String(v.to_string()),
-            Ok(None) => Value::Null,
-            Err(_) => Value::Null,
-        },
-        Type::TIME | Type::TIMETZ => match row.try_get::<_, Option<chrono::NaiveTime>>(idx) {
-            Ok(Some(v)) => Value::String(v.to_string()),
-            Ok(None) => Value::Null,
-            Err(_) => Value::Null,
-        },
-        _ => match row.try_get::<_, RawBytes>(idx) {
-            Ok(RawBytes(Some(b))) => Value::String(format_unsupported_type(col_type.name(), b)),
-            Ok(RawBytes(None)) => Value::Null,
-            Err(_) => Value::Null,
-        },
+        Ok(RawBytes(None)) => Value::Null,
+        Err(_) => Value::Null,
     }
 }
 
@@ -110,8 +193,12 @@ pub(crate) fn format_row_value(row: &Row, idx: usize) -> Value {
 ///
 /// Prefers `Number` when the value fits in `i64`/`u64`/`f64` without loss;
 /// falls back to `String` for high-precision values that JSON numbers
-/// cannot represent exactly.
+/// cannot represent exactly (fractional with total significant digits
+/// greater than 15, which exceeds IEEE 754 double's ~15.95 decimal-digit
+/// precision; or integers outside the i64/u64 range).
 fn decimal_to_json(d: Decimal) -> Value {
+    // Integer fast-paths: i64/u64 give exact JSON Number representation
+    // for the full machine-integer range regardless of digit count.
     if d.is_integer() {
         if let Some(i) = d.to_i64() {
             return json!(i);
@@ -121,12 +208,75 @@ fn decimal_to_json(d: Decimal) -> Value {
         }
         return Value::String(d.to_string());
     }
+    // Fractional: guard f64 precision. Total significant digits
+    // (integer digits + scale) > 15 exceeds IEEE 754 double precision
+    // and would silently round-trip lose precision via f64.
+    let int_digits = integer_digit_count(&d);
+    let total_digits = int_digits + d.scale() as usize;
+    if total_digits > 15 {
+        return Value::String(d.to_string());
+    }
     if let Some(f) = d.to_f64() {
         if let Some(n) = serde_json::Number::from_f64(f) {
             return Value::Number(n);
         }
     }
     Value::String(d.to_string())
+}
+
+fn integer_digit_count(d: &Decimal) -> usize {
+    if d.is_zero() {
+        return 1;
+    }
+    let s = d.abs().to_string();
+    let int_part = s.split('.').next().unwrap_or("");
+    int_part.trim_end_matches('0').len().max(1)
+}
+
+/// PostgreSQL INTERVAL binary layout: i64 microseconds + i32 days +
+/// i32 months, all big-endian. Format mirrors psql's pretty-printing.
+fn format_interval(b: &[u8]) -> String {
+    if b.len() != 16 {
+        return format!("<malformed interval: {} bytes>", b.len());
+    }
+    let mut buf = [0u8; 16];
+    buf.copy_from_slice(b);
+    let micros = i64::from_be_bytes(buf[0..8].try_into().unwrap());
+    let days = i32::from_be_bytes(buf[8..12].try_into().unwrap());
+    let months = i32::from_be_bytes(buf[12..16].try_into().unwrap());
+
+    let mut parts: Vec<String> = Vec::new();
+    if months != 0 {
+        let years = months / 12;
+        let mons = months % 12;
+        if years != 0 {
+            parts.push(format!("{} years", years));
+        }
+        if mons != 0 {
+            parts.push(format!("{} mons", mons));
+        }
+    }
+    if days != 0 {
+        parts.push(format!("{} days", days));
+    }
+    if micros != 0 {
+        let total_secs = micros.div_euclid(1_000_000);
+        let frac = micros.rem_euclid(1_000_000).abs();
+        let h = total_secs / 3600;
+        let m = (total_secs % 3600) / 60;
+        let s = total_secs % 60;
+        let time_part = if frac > 0 {
+            format!("{:02}:{:02}:{:02}.{:06}", h.abs(), m.abs(), s.abs(), frac)
+        } else {
+            format!("{:02}:{:02}:{:02}", h.abs(), m.abs(), s.abs())
+        };
+        parts.push(time_part);
+    }
+    if parts.is_empty() {
+        "00:00:00".to_string()
+    } else {
+        parts.join(" ")
+    }
 }
 
 /// Build a visible placeholder for unsupported column types so silent data
@@ -149,7 +299,6 @@ pub(crate) fn format_table(columns: &[String], rows: &[Vec<Value>]) -> String {
         return String::new();
     }
 
-    // Calculate column widths
     let mut col_widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
     for row in rows {
         for (i, val) in row.iter().enumerate() {
@@ -160,14 +309,12 @@ pub(crate) fn format_table(columns: &[String], rows: &[Vec<Value>]) -> String {
         }
     }
 
-    // Build separator
     let sep: String = col_widths
         .iter()
         .map(|w| "-".repeat(*w))
         .collect::<Vec<_>>()
         .join("-+-");
 
-    // Build header
     let header: String = columns
         .iter()
         .enumerate()
@@ -175,7 +322,6 @@ pub(crate) fn format_table(columns: &[String], rows: &[Vec<Value>]) -> String {
         .collect::<Vec<_>>()
         .join(" | ");
 
-    // Build rows
     let mut result = String::new();
     result.push_str(&header);
     result.push('\n');
@@ -257,12 +403,19 @@ mod tests {
     }
 
     #[test]
-    fn decimal_to_json_high_precision_fraction_uses_f64() {
+    fn decimal_to_json_normal_precision_fraction_uses_number() {
+        let d = Decimal::from_str("1.12345678901234").unwrap();
+        let v = decimal_to_json(d);
+        assert!(matches!(v, Value::Number(_)), "got {v:?}");
+    }
+
+    #[test]
+    fn decimal_to_json_high_precision_fraction_falls_back_to_string() {
         let d = Decimal::from_str("1.123456789012345").unwrap();
         let v = decimal_to_json(d);
         match v {
-            Value::Number(_) => {}
-            other => panic!("expected Number, got {other:?}"),
+            Value::String(s) => assert_eq!(s, "1.123456789012345"),
+            other => panic!("expected String fallback, got {other:?}"),
         }
     }
 
@@ -271,6 +424,34 @@ mod tests {
         let s = format_unsupported_type("hstore", &[0x01, 0x02, 0xff]);
         assert!(s.contains("hstore"));
         assert!(s.contains("0102ff"));
+    }
+
+    #[test]
+    fn format_interval_zero() {
+        let bytes = [0u8; 16];
+        assert_eq!(format_interval(&bytes), "00:00:00");
+    }
+
+    #[test]
+    fn format_interval_one_day() {
+        let mut bytes = [0u8; 16];
+        bytes[8..12].copy_from_slice(&1i32.to_be_bytes());
+        assert_eq!(format_interval(&bytes), "1 days");
+    }
+
+    #[test]
+    fn format_interval_hours_minutes_seconds() {
+        let micros: i64 = (2 * 3600 + 3 * 60 + 4) * 1_000_000;
+        let mut bytes = [0u8; 16];
+        bytes[0..8].copy_from_slice(&micros.to_be_bytes());
+        assert_eq!(format_interval(&bytes), "02:03:04");
+    }
+
+    #[test]
+    fn format_interval_malformed() {
+        let bytes = [0u8; 8];
+        let s = format_interval(&bytes);
+        assert!(s.contains("malformed"));
     }
 }
 
@@ -379,13 +560,44 @@ mod integration_tests {
         }
     }
 
+    #[tokio::test]
+    async fn interval_column_preserved() {
+        let client = connect().await;
+        let v = first_value(&client, "SELECT '1 day 02:03:04'::interval").await;
+        match v {
+            Value::String(s) => {
+                assert!(s.contains("1 day") || s.contains("days"), "got: {s}");
+                assert!(s.contains("02:03:04"), "got: {s}");
+            }
+            other => panic!("expected INTERVAL String, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn inet_column_preserved() {
+        let client = connect().await;
+        let v = first_value(&client, "SELECT '192.168.1.1'::inet").await;
+        assert_eq!(v, Value::String("192.168.1.1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn macaddr_column_preserved() {
+        let client = connect().await;
+        let v = first_value(&client, "SELECT '08:00:2b:01:02:03'::macaddr").await;
+        match v {
+            Value::String(s) => assert!(s.contains("08:00:2b:01:02:03"), "got: {s}"),
+            other => panic!("expected MACADDR String, got {other:?}"),
+        }
+    }
+
     // Silent-NULL regression guard: types NOT in the dispatch table must
-    // emit a visible placeholder, NOT Value::Null. If a future change
+    // emit a visible placeholder, NOT Value::Null. Uses POINT (geometry,
+    // no handler) as the unsupported-type probe. If a future change
     // re-introduces `_ => Value::Null`, this test fails loudly.
     #[tokio::test]
     async fn unsupported_type_emits_visible_placeholder_not_null() {
         let client = connect().await;
-        let v = first_value(&client, "SELECT '08:00:2b:01:02:03'::macaddr").await;
+        let v = first_value(&client, "SELECT '(1,2)'::point").await;
         assert_ne!(
             v,
             Value::Null,
@@ -393,7 +605,7 @@ mod integration_tests {
         );
         match v {
             Value::String(s) => assert!(
-                s.contains("<unsupported type") || s.contains("macaddr"),
+                s.contains("<unsupported type") || s.contains("point"),
                 "expected visible placeholder, got: {s}"
             ),
             other => panic!("expected String placeholder, got {other:?}"),

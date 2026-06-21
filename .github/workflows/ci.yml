@@ -108,3 +108,5 @@ jobs:
       - run: cargo test --all
       - run: cargo test --manifest-path crates/tokio-opengauss/Cargo.toml --no-default-features
       - run: cargo test --all --all-features
+        env:
+          GAUSSDB_TEST_URL: host=127.0.0.1 port=5433 user=postgres password=postgres dbname=postgres
