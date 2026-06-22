@@ -230,7 +230,7 @@ fn integer_digit_count(d: &Decimal) -> usize {
     }
     let s = d.abs().to_string();
     let int_part = s.split('.').next().unwrap_or("");
-    int_part.trim_end_matches('0').len().max(1)
+    int_part.len()
 }
 
 /// PostgreSQL INTERVAL binary layout: i64 microseconds + i32 days +
@@ -417,6 +417,32 @@ mod tests {
             Value::String(s) => assert_eq!(s, "1.123456789012345"),
             other => panic!("expected String fallback, got {other:?}"),
         }
+    }
+
+    // Regression guard: integer part with trailing zeros must NOT be
+    // under-counted. Previously integer_digit_count stripped trailing
+    // zeros from the integer part, so 10000000000000000.1 was reported
+    // as 2 significant digits (instead of 18) and silently lost precision
+    // via f64 round-trip.
+    #[test]
+    fn decimal_to_json_integer_with_trailing_zeros_preserves_precision() {
+        let d = Decimal::from_str("10000000000000000.1").unwrap();
+        let v = decimal_to_json(d);
+        match v {
+            Value::String(s) => assert_eq!(s, "10000000000000000.1"),
+            other => panic!("expected String fallback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn integer_digit_count_no_trailing_zero_stripping() {
+        assert_eq!(integer_digit_count(&Decimal::from_str("1000").unwrap()), 4);
+        assert_eq!(
+            integer_digit_count(&Decimal::from_str("1000000.5").unwrap()),
+            7
+        );
+        assert_eq!(integer_digit_count(&Decimal::from_str("1.5").unwrap()), 1);
+        assert_eq!(integer_digit_count(&Decimal::from_str("0.5").unwrap()), 1);
     }
 
     #[test]
