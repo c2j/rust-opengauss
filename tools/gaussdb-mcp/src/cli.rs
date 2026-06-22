@@ -6,7 +6,7 @@ use crate::config::{
     rewrite_password_to_sentinel, store_keyring_password,
 };
 use crate::connection::do_connect;
-use crate::output::{format_row_value, format_table};
+use crate::output::{format_row_value, format_table, format_value_with_type};
 use crate::server::{format_error_chain, sqlstate_to_sqlcode};
 use futures_util::StreamExt;
 use tokio_opengauss::types::ToSql;
@@ -173,6 +173,7 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
                 let mut wtr = csv::Writer::from_writer(stdout.lock());
                 let mut count = 0usize;
                 let mut header_written = false;
+                let mut cached_types: Vec<tokio_opengauss::types::Type> = Vec::new();
 
                 while let Some(row_result) = stream.next().await {
                     let row = row_result
@@ -181,14 +182,17 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
                         let header: Vec<&str> = row.columns().iter().map(|c| c.name()).collect();
                         wtr.write_record(&header)
                             .map_err(|e| format!("CSV write error: {}", e))?;
+                        cached_types = row.columns().iter().map(|c| c.type_().clone()).collect();
                         header_written = true;
                     }
                     let record: Vec<String> = (0..row.len())
-                        .map(|idx| match format_row_value(&row, idx) {
-                            // NULL → empty field (RFC 4180 / psql copy-csv).
-                            serde_json::Value::Null => String::new(),
-                            serde_json::Value::String(s) => s,
-                            other => other.to_string(),
+                        .map(|idx| {
+                            let ty = &cached_types[idx];
+                            match format_value_with_type(&row, idx, ty) {
+                                serde_json::Value::Null => String::new(),
+                                serde_json::Value::String(s) => s,
+                                other => other.to_string(),
+                            }
                         })
                         .collect();
                     wtr.write_record(&record)
@@ -211,6 +215,7 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
                 );
                 let mut count = 0usize;
                 let mut columns: Option<Vec<String>> = None;
+                let mut cached_types: Vec<tokio_opengauss::types::Type> = Vec::new();
 
                 while let Some(row_result) = stream.next().await {
                     let row = row_result
@@ -218,12 +223,14 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
                     if columns.is_none() {
                         columns =
                             Some(row.columns().iter().map(|c| c.name().to_string()).collect());
+                        cached_types = row.columns().iter().map(|c| c.type_().clone()).collect();
                     }
                     let cols = columns.as_ref().unwrap();
                     count += 1;
                     println!("-[ RECORD {} ]-", count);
                     for (idx, col_name) in cols.iter().enumerate() {
-                        let val = format_row_value(&row, idx);
+                        let ty = &cached_types[idx];
+                        let val = format_value_with_type(&row, idx, ty);
                         let val_str = match &val {
                             serde_json::Value::Null => "NULL".to_string(),
                             v => v.to_string(),

@@ -34,6 +34,7 @@ with-bit-vec-0_7 = ["opengauss-types/with-bit-vec-0_7"]
 with-bit-vec-0_8 = ["opengauss-types/with-bit-vec-0_8"]
 with-bit-vec-0_9 = ["opengauss-types/with-bit-vec-0_9"]
 with-chrono-0_4 = ["opengauss-types/with-chrono-0_4"]
+with-rust_decimal-1 = ["opengauss-types/with-rust_decimal-1"]
 with-cidr-0_2 = ["opengauss-types/with-cidr-0_2"]
 with-cidr-0_3 = ["opengauss-types/with-cidr-0_3"]
 with-eui48-0_4 = ["opengauss-types/with-eui48-0_4"]
@@ -94,6 +95,7 @@ bit-vec-07 = { version = "0.7", package = "bit-vec" }
 bit-vec-08 = { version = "0.8", package = "bit-vec" }
 bit-vec-09 = { version = "0.9", package = "bit-vec" }
 chrono-04 = { version = "0.4", package = "chrono", default-features = false }
+rust_decimal-1 = { version = "1.41", package = "rust_decimal", default-features = false, features = ["std"] }
 eui48-1 = { version = "1.0", package = "eui48", default-features = false }
 geo-types-06 = { version = "0.6", package = "geo-types" }
 geo-types-07 = { version = "0.7", package = "geo-types" }

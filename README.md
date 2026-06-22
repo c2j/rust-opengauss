@@ -105,6 +105,12 @@ gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 5" --format vertical
 # CSV export (RFC 4180, streaming to stdout; redirect to a file to save)
 gaussdb-mcp cli --sql "SELECT * FROM users" --format csv > users.csv
 
+# Large export tip: cast NUMERIC columns to text server-side to skip
+# client-side decimal decoding and minimise CPU cost on multi-million-row
+# exports. Server-side rendering is what psql / pg_dump effectively do.
+gaussdb-mcp cli --sql "SELECT id, amount::text, created_at::text FROM big_table" \
+  --format csv > big_table.csv
+
 # DML/DDL supported
 gaussdb-mcp cli --sql "INSERT INTO logs VALUES (1, 'hello')"
 gaussdb-mcp cli --sql "CREATE TABLE test (id int)"
