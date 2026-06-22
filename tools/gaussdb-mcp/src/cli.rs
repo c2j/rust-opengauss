@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -162,42 +163,24 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
         let no_params: [&(dyn ToSql + Sync); 0] = [];
         match args.format {
             OutputFormat::Csv => {
-                // O(1) memory: stream rows via query_raw instead of buffering.
+                // Server-side CSV via COPY — zero per-row client processing.
+                let inner = trimmed.trim_end_matches(|c: char| c == ';' || c.is_whitespace());
+                let copy_sql = format!("COPY ({}) TO STDOUT WITH (FORMAT CSV, HEADER true)", inner);
                 let mut stream = std::pin::pin!(
                     client
-                        .query_raw(trimmed, no_params)
+                        .copy_out(&copy_sql)
                         .await
-                        .map_err(|e| format!("Query failed: {}", format_sql_error(&e)))?
+                        .map_err(|e| format!("COPY failed: {}", format_sql_error(&e)))?
                 );
                 let stdout = std::io::stdout();
-                let mut wtr = csv::Writer::from_writer(stdout.lock());
-                let mut count = 0usize;
-                let mut header_written = false;
-                let mut cached_types: Vec<tokio_opengauss::types::Type> = Vec::new();
-
-                while let Some(row_result) = stream.next().await {
-                    let row = row_result
-                        .map_err(|e| format!("Query failed: {}", format_sql_error(&e)))?;
-                    if !header_written {
-                        let header: Vec<&str> = row.columns().iter().map(|c| c.name()).collect();
-                        wtr.write_record(&header)
-                            .map_err(|e| format!("CSV write error: {}", e))?;
-                        cached_types = row.columns().iter().map(|c| c.type_().clone()).collect();
-                        header_written = true;
-                    }
-                    wtr.write_record(
-                        cached_types.iter().enumerate().map(|(idx, ty)| {
-                            format_field_string(&row, idx, ty).unwrap_or_default()
-                        }),
-                    )
-                    .map_err(|e| format!("CSV write error: {}", e))?;
-                    count += 1;
+                let mut out = stdout.lock();
+                while let Some(chunk_result) = stream.next().await {
+                    let chunk = chunk_result
+                        .map_err(|e| format!("COPY failed: {}", format_sql_error(&e)))?;
+                    out.write_all(&chunk)
+                        .map_err(|e| format!("write error: {}", e))?;
                 }
-                wtr.flush().map_err(|e| format!("CSV flush error: {}", e))?;
-                if count == 0 {
-                    // stderr, not stdout: stdout is the pure CSV data stream.
-                    eprintln!("(0 rows)");
-                }
+                out.flush().map_err(|e| format!("flush error: {}", e))?;
             }
             OutputFormat::Vertical => {
                 // O(1) memory: stream rows via query_raw instead of buffering.
