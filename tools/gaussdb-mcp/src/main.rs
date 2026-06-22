@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod connection;
 mod duration_parse;
+mod interactive;
 mod output;
 mod queries;
 mod server;
@@ -93,6 +94,10 @@ enum Commands {
         /// Action on timeout: "cancel" or "disconnect". Default: cancel.
         #[arg(long)]
         timeout_action: Option<String>,
+
+        /// Enter interactive REPL mode
+        #[arg(short, long)]
+        interactive: bool,
     },
 }
 
@@ -1130,10 +1135,27 @@ async fn main() {
             statement_timeout,
             connection_max_lifetime,
             timeout_action,
+            interactive,
         }) => {
             if check_connection {
                 let config_path = cli.config.map(PathBuf::from);
                 handle_check_connection_cmd(cli.name, verbose, config_path).await;
+            } else if interactive {
+                let fmt: cli::OutputFormat = format.parse().unwrap_or(cli::OutputFormat::Table);
+                let args = cli::CliArgs {
+                    sql,
+                    file,
+                    connection_name: cli.name,
+                    config_path: cli.config,
+                    format: fmt,
+                    statement_timeout,
+                    connection_max_lifetime,
+                    timeout_action,
+                };
+                if let Err(e) = interactive::run_interactive(args).await {
+                    eprintln!("error: {}", e);
+                    std::process::exit(1);
+                }
             } else {
                 let fmt: cli::OutputFormat = format.parse().unwrap_or(cli::OutputFormat::Table);
                 let args = cli::CliArgs {
