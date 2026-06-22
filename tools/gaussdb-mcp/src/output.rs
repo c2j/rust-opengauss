@@ -157,6 +157,160 @@ pub(crate) fn format_value_with_type(row: &Row, idx: usize, ty: &Type) -> Value 
     }
 }
 
+pub(crate) fn format_field_string(row: &Row, idx: usize, ty: &Type) -> Option<String> {
+    match *ty {
+        Type::VARCHAR | Type::TEXT | Type::BPCHAR | Type::NAME | Type::UNKNOWN => {
+            typed_or_raw_str(row, idx, ty, |r, i| {
+                match r.try_get::<_, Option<String>>(i) {
+                    Ok(Some(s)) => Some(Some(s)),
+                    Ok(None) => Some(None),
+                    Err(_) => None,
+                }
+            })
+        }
+        Type::INT2 => typed_or_raw_str(row, idx, ty, |r, i| {
+            r.try_get::<_, Option<i16>>(i)
+                .ok()
+                .map(|v| v.map(|x| x.to_string()))
+        }),
+        Type::INT4 | Type::OID | Type::REGPROC | Type::REGTYPE => {
+            typed_or_raw_str(row, idx, ty, |r, i| {
+                r.try_get::<_, Option<i32>>(i)
+                    .ok()
+                    .map(|v| v.map(|x| x.to_string()))
+            })
+        }
+        Type::INT8 | Type::REGCLASS => typed_or_raw_str(row, idx, ty, |r, i| {
+            r.try_get::<_, Option<i64>>(i)
+                .ok()
+                .map(|v| v.map(|x| x.to_string()))
+        }),
+        Type::FLOAT4 => typed_or_raw_str(row, idx, ty, |r, i| {
+            r.try_get::<_, Option<f32>>(i)
+                .ok()
+                .map(|v| v.map(|x| x.to_string()))
+        }),
+        Type::FLOAT8 => typed_or_raw_str(row, idx, ty, |r, i| {
+            r.try_get::<_, Option<f64>>(i)
+                .ok()
+                .map(|v| v.map(|x| x.to_string()))
+        }),
+        Type::NUMERIC => typed_or_raw_str(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<Decimal>>(i) {
+                Ok(Some(d)) => Some(Some(d.to_string())),
+                Ok(None) => Some(None),
+                Err(_) => None,
+            }
+        }),
+        Type::BOOL => typed_or_raw_str(row, idx, ty, |r, i| {
+            r.try_get::<_, Option<bool>>(i)
+                .ok()
+                .map(|v| v.map(|x| x.to_string()))
+        }),
+        Type::BYTEA => typed_or_raw_str(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<&[u8]>>(i) {
+                Ok(Some(b)) => Some(Some(format!("\\x{}", hex_bytes(b)))),
+                Ok(None) => Some(None),
+                Err(_) => None,
+            }
+        }),
+        Type::UUID => typed_or_raw_str(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<uuid::Uuid>>(i) {
+                Ok(Some(u)) => Some(Some(u.to_string())),
+                Ok(None) => Some(None),
+                Err(_) => None,
+            }
+        }),
+        Type::JSON | Type::JSONB => typed_or_raw_str(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<Value>>(i) {
+                Ok(Some(v)) => Some(Some(v.to_string())),
+                Ok(None) => Some(None),
+                Err(_) => None,
+            }
+        }),
+        Type::TIMESTAMP | Type::TIMESTAMPTZ => typed_or_raw_str(row, idx, ty, |r, i| match r
+            .try_get::<_, Option<chrono::NaiveDateTime>>(i)
+        {
+            Ok(Some(v)) => Some(Some(v.to_string())),
+            Ok(None) => Some(None),
+            Err(_) => None,
+        }),
+        Type::DATE => typed_or_raw_str(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<chrono::NaiveDate>>(i) {
+                Ok(Some(v)) => Some(Some(v.to_string())),
+                Ok(None) => Some(None),
+                Err(_) => None,
+            }
+        }),
+        Type::TIME | Type::TIMETZ => typed_or_raw_str(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<chrono::NaiveTime>>(i) {
+                Ok(Some(v)) => Some(Some(v.to_string())),
+                Ok(None) => Some(None),
+                Err(_) => None,
+            }
+        }),
+        Type::INET | Type::CIDR => typed_or_raw_str(row, idx, ty, |r, i| {
+            match r.try_get::<_, Option<IpAddr>>(i) {
+                Ok(Some(ip)) => Some(Some(ip.to_string())),
+                Ok(None) => Some(None),
+                Err(_) => None,
+            }
+        }),
+        Type::MACADDR => typed_or_raw_str(row, idx, ty, |r, i| match r.try_get::<_, RawBytes>(i) {
+            Ok(RawBytes(Some(b))) if b.len() == 6 => Some(Some(format!(
+                "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                b[0], b[1], b[2], b[3], b[4], b[5]
+            ))),
+            Ok(RawBytes(None)) => Some(None),
+            _ => None,
+        }),
+        Type::MACADDR8 => {
+            typed_or_raw_str(row, idx, ty, |r, i| match r.try_get::<_, RawBytes>(i) {
+                Ok(RawBytes(Some(b))) if b.len() == 8 => Some(Some(format!(
+                    "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                    b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]
+                ))),
+                Ok(RawBytes(None)) => Some(None),
+                _ => None,
+            })
+        }
+        Type::INTERVAL => {
+            typed_or_raw_str(row, idx, ty, |r, i| match r.try_get::<_, RawBytes>(i) {
+                Ok(RawBytes(Some(b))) => Some(Some(format_interval(b))),
+                Ok(RawBytes(None)) => Some(None),
+                _ => None,
+            })
+        }
+        _ => raw_bytes_string_fallback(row, idx, ty),
+    }
+}
+
+fn typed_or_raw_str<F>(row: &Row, idx: usize, ty: &Type, extract: F) -> Option<String>
+where
+    F: Fn(&Row, usize) -> Option<Option<String>>,
+{
+    match extract(row, idx) {
+        Some(v) => v,
+        None => raw_bytes_string_fallback(row, idx, ty),
+    }
+}
+
+fn raw_bytes_string_fallback(row: &Row, idx: usize, ty: &Type) -> Option<String> {
+    match row.try_get::<_, RawBytes>(idx) {
+        Ok(RawBytes(Some(b))) => {
+            tracing::warn!(
+                type_name = ty.name(),
+                column_index = idx,
+                bytes_len = b.len(),
+                "unsupported column type, emitting hex fallback"
+            );
+            Some(format_unsupported_type(ty.name(), b))
+        }
+        Ok(RawBytes(None)) => None,
+        Err(_) => None,
+    }
+}
+
 /// Dispatch helper: try the typed extraction first; if it returns None
 /// (meaning the typed FromSql failed), fall through to a raw-bytes
 /// placeholder rather than dropping the value to NULL. This closes the

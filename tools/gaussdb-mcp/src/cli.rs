@@ -6,7 +6,7 @@ use crate::config::{
     rewrite_password_to_sentinel, store_keyring_password,
 };
 use crate::connection::do_connect;
-use crate::output::{format_row_value, format_table, format_value_with_type};
+use crate::output::{format_field_string, format_row_value, format_table};
 use crate::server::{format_error_chain, sqlstate_to_sqlcode};
 use futures_util::StreamExt;
 use tokio_opengauss::types::ToSql;
@@ -185,18 +185,12 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
                         cached_types = row.columns().iter().map(|c| c.type_().clone()).collect();
                         header_written = true;
                     }
-                    let record: Vec<String> = (0..row.len())
-                        .map(|idx| {
-                            let ty = &cached_types[idx];
-                            match format_value_with_type(&row, idx, ty) {
-                                serde_json::Value::Null => String::new(),
-                                serde_json::Value::String(s) => s,
-                                other => other.to_string(),
-                            }
-                        })
-                        .collect();
-                    wtr.write_record(&record)
-                        .map_err(|e| format!("CSV write error: {}", e))?;
+                    wtr.write_record(
+                        cached_types.iter().enumerate().map(|(idx, ty)| {
+                            format_field_string(&row, idx, ty).unwrap_or_default()
+                        }),
+                    )
+                    .map_err(|e| format!("CSV write error: {}", e))?;
                     count += 1;
                 }
                 wtr.flush().map_err(|e| format!("CSV flush error: {}", e))?;
@@ -230,11 +224,8 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
                     println!("-[ RECORD {} ]-", count);
                     for (idx, col_name) in cols.iter().enumerate() {
                         let ty = &cached_types[idx];
-                        let val = format_value_with_type(&row, idx, ty);
-                        let val_str = match &val {
-                            serde_json::Value::Null => "NULL".to_string(),
-                            v => v.to_string(),
-                        };
+                        let val_str = format_field_string(&row, idx, ty)
+                            .unwrap_or_else(|| "NULL".to_string());
                         println!("{} | {}", col_name, val_str);
                     }
                 }
