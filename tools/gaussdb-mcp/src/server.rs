@@ -14,8 +14,8 @@ use crate::config::{TimeoutAction, TimeoutConfig};
 use crate::connection;
 use crate::output;
 use crate::queries;
+use gaussdb::error::SqlState;
 use std::time::Instant;
-use tokio_opengauss::error::SqlState;
 
 pub(crate) fn sqlstate_to_sqlcode(state: &str) -> i32 {
     match state {
@@ -293,7 +293,7 @@ fn connection_error(url: &str, err: &dyn std::error::Error) -> McpError {
     )
 }
 
-fn query_error(tool: &str, sql: &str, err: &tokio_opengauss::Error) -> McpError {
+fn query_error(tool: &str, sql: &str, err: &gaussdb::Error) -> McpError {
     let sql_preview = if sql.len() > 200 {
         format!("{}...", &sql[..200])
     } else {
@@ -419,7 +419,7 @@ enum ConnectionState {
         timeout_config: TimeoutConfig,
     },
     Connected {
-        client: Arc<tokio_opengauss::Client>,
+        client: Arc<gaussdb::Client>,
         url: String,
         timeout_config: TimeoutConfig,
         connected_at: Instant,
@@ -501,7 +501,7 @@ impl GaussdbMcp {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn new(client: tokio_opengauss::Client) -> Self {
+    pub(crate) fn new(client: gaussdb::Client) -> Self {
         let mut connections = HashMap::new();
         connections.insert(
             "default".to_string(),
@@ -586,7 +586,7 @@ impl GaussdbMcp {
     async fn get_client_for(
         &self,
         connection_name: Option<&str>,
-    ) -> Result<Arc<tokio_opengauss::Client>, McpError> {
+    ) -> Result<Arc<gaussdb::Client>, McpError> {
         let name = connection_name.unwrap_or(&self.default_name).to_string();
         let mut conns = self.connections.lock().await;
 
@@ -682,7 +682,7 @@ impl GaussdbMcp {
 
     /// Backward-compatible: get client for default connection.
     #[allow(dead_code)]
-    async fn get_client(&self) -> Result<Arc<tokio_opengauss::Client>, McpError> {
+    async fn get_client(&self) -> Result<Arc<gaussdb::Client>, McpError> {
         self.get_client_for(None).await
     }
 
@@ -690,7 +690,7 @@ impl GaussdbMcp {
         &self,
         name: String,
         url: String,
-    ) -> Result<Arc<tokio_opengauss::Client>, McpError> {
+    ) -> Result<Arc<gaussdb::Client>, McpError> {
         let tc = self.timeout_configs.get(&name).cloned().unwrap_or_default();
 
         let result = connection::do_connect(&url, Some(&tc)).await;
@@ -747,13 +747,13 @@ impl GaussdbMcp {
         }
     }
 
-    /// Handle a tokio_opengauss query error. If it is a connection-level
+    /// Handle a gaussdb query error. If it is a connection-level
     /// error (not a DB/SQL error), downgrade the state so the next call
     /// reconnects, then return the MCP error.
     async fn handle_query_error(
         &self,
         name: &str,
-        err: tokio_opengauss::Error,
+        err: gaussdb::Error,
         tool: &str,
         sql: &str,
     ) -> McpError {
@@ -805,10 +805,10 @@ impl GaussdbMcp {
     /// connection in practice. If concurrent per-call overrides become needed,
     /// wrap each call in a per-connection Mutex.
     async fn query_with_optional_timeout(
-        client: &tokio_opengauss::Client,
+        client: &gaussdb::Client,
         sql: &str,
         timeout_ms: Option<u64>,
-    ) -> Result<Vec<tokio_opengauss::Row>, tokio_opengauss::Error> {
+    ) -> Result<Vec<gaussdb::Row>, gaussdb::Error> {
         match timeout_ms {
             None => client.query(sql, &[]).await,
             Some(ms) => {

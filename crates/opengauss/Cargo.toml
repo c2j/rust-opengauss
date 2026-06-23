@@ -1,6 +1,7 @@
 [package]
 name = "opengauss"
 version = "0.19.13"
+publish = false
 authors = ["Steven Fackler <sfackler@gmail.com>"]
 edition = "2024"
 license = "MIT OR Apache-2.0"

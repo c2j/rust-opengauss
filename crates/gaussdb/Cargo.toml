@@ -1,0 +1,68 @@
+[package]
+name = "gaussdb"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "A unified asynchronous (and optional synchronous) openGauss/PostgreSQL client"
+repository = "https://github.com/c2j/rust-opengauss"
+readme = "../../README.md"
+keywords = ["database", "opengauss", "sql", "async", "postgres"]
+categories = ["database"]
+rust-version = "1.85"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = ["runtime"]
+runtime = ["tokio-opengauss/runtime"]
+
+# 同步门面(opt-in)。启用后激活 opengauss 同步封装层;opengauss 自带
+# tokio = { features = ["rt", "time"] } 依赖(用于内部创建 Runtime 阻塞调用 async Client),
+# 这与下方 runtime feature(tokio-opengauss/runtime ⇒ tokio/net + tokio/time)是两件事。
+sync = ["dep:opengauss"]
+
+# TLS 连接器(命名空间隔离避免 native-tls/openssl 撞名)
+tls-native-tls = ["dep:opengauss-native-tls"]
+tls-openssl    = ["dep:opengauss-openssl"]
+
+# derive 宏透传(MF1):让用户能用 #[derive(ToSql, FromSql)]
+derive = ["tokio-opengauss/derive"]
+
+# 类型扩展透传(全部 ~19 个,与 tokio-opengauss 对齐)
+array-impls        = ["tokio-opengauss/array-impls"]
+with-bit-vec-0_6   = ["tokio-opengauss/with-bit-vec-0_6"]
+with-bit-vec-0_7   = ["tokio-opengauss/with-bit-vec-0_7"]
+with-bit-vec-0_8   = ["tokio-opengauss/with-bit-vec-0_8"]
+with-bit-vec-0_9   = ["tokio-opengauss/with-bit-vec-0_9"]
+with-chrono-0_4    = ["tokio-opengauss/with-chrono-0_4"]
+with-rust_decimal-1 = ["tokio-opengauss/with-rust_decimal-1"]
+with-cidr-0_2      = ["tokio-opengauss/with-cidr-0_2"]
+with-cidr-0_3      = ["tokio-opengauss/with-cidr-0_3"]
+with-eui48-0_4     = ["tokio-opengauss/with-eui48-0_4"]
+with-eui48-1       = ["tokio-opengauss/with-eui48-1"]
+with-geo-types-0_6 = ["tokio-opengauss/with-geo-types-0_6"]
+with-geo-types-0_7 = ["tokio-opengauss/with-geo-types-0_7"]
+with-jiff-0_1      = ["tokio-opengauss/with-jiff-0_1"]
+with-jiff-0_2      = ["tokio-opengauss/with-jiff-0_2"]
+with-serde_json-1  = ["tokio-opengauss/with-serde_json-1"]
+with-smol_str-01   = ["tokio-opengauss/with-smol_str-01"]
+with-uuid-0_8      = ["tokio-opengauss/with-uuid-0_8"]
+with-uuid-1        = ["tokio-opengauss/with-uuid-1"]
+with-time-0_2      = ["tokio-opengauss/with-time-0_2"]
+with-time-0_3      = ["tokio-opengauss/with-time-0_3"]
+
+# 集成测试闸门(MF4):需要 docker compose 起的 DB。测试只用异步表面,无需 sync。
+integration = ["tokio-opengauss/integration"]
+
+[dependencies]
+tokio-opengauss = { version = "0.7.17", path = "../tokio-opengauss" }
+fallible-iterator = "0.2"
+# 可选,全部 dep: 形式(MF1/WASM 安全)
+opengauss           = { version = "0.19.13", path = "../opengauss",           optional = true }
+opengauss-native-tls = { version = "0.5.3",  path = "../opengauss-native-tls", optional = true }
+opengauss-openssl    = { version = "0.5.3",  path = "../opengauss-openssl",    optional = true }
+opengauss-protocol   = { version = "0.6.11", path = "../opengauss-protocol" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "net", "time"] }
