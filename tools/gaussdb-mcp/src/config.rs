@@ -1,5 +1,6 @@
 use keyring::Entry;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -120,6 +121,7 @@ pub(crate) enum PasswordSource {
 
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct NamedConnection {
+    #[serde(skip)]
     pub(crate) name: String,
     pub(crate) url: Option<String>,
     pub(crate) host: Option<String>,
@@ -153,7 +155,8 @@ pub(crate) struct MultiConfig {
     pub(crate) timeout_action: Option<String>,
 
     pub(crate) default_connection: Option<String>,
-    pub(crate) connections: Option<Vec<NamedConnection>>,
+    #[serde(default)]
+    pub(crate) connections: BTreeMap<String, NamedConnection>,
 }
 
 impl NamedConnection {
@@ -215,37 +218,38 @@ impl NamedConnection {
 
 impl MultiConfig {
     pub(crate) fn resolve(self) -> Result<(Vec<NamedConnection>, Option<String>), String> {
-        match self.connections {
-            Some(ref conns) if !conns.is_empty() => {
-                let default = self
-                    .default_connection
-                    .clone()
-                    .or_else(|| conns.first().map(|c| c.name.clone()));
-                Ok((self.connections.unwrap(), default))
+        if !self.connections.is_empty() {
+            let default = self
+                .default_connection
+                .clone()
+                .or_else(|| self.connections.keys().next().cloned());
+            let mut conns = Vec::with_capacity(self.connections.len());
+            for (name, mut conn) in self.connections {
+                conn.name = name;
+                conns.push(conn);
             }
-            _ => {
-                if self.host.is_none() && self.user.is_none() && self.url.is_none() {
-                    return Err(
-                        "config must contain either [[connections]] or flat host/user fields"
-                            .into(),
-                    );
-                }
-                let single = NamedConnection {
-                    name: "default".to_string(),
-                    url: self.url,
-                    host: self.host,
-                    port: self.port,
-                    user: self.user,
-                    password: self.password,
-                    dbname: self.dbname,
-                    sslmode: self.sslmode,
-                    statement_timeout: self.statement_timeout,
-                    connection_max_lifetime: self.connection_max_lifetime,
-                    timeout_action: self.timeout_action,
-                };
-                Ok((vec![single], Some("default".to_string())))
-            }
+            return Ok((conns, default));
         }
+
+        if self.host.is_none() && self.user.is_none() && self.url.is_none() {
+            return Err(
+                "config must contain either [connections.<name>] or flat host/user fields".into(),
+            );
+        }
+        let single = NamedConnection {
+            name: "default".to_string(),
+            url: self.url,
+            host: self.host,
+            port: self.port,
+            user: self.user,
+            password: self.password,
+            dbname: self.dbname,
+            sslmode: self.sslmode,
+            statement_timeout: self.statement_timeout,
+            connection_max_lifetime: self.connection_max_lifetime,
+            timeout_action: self.timeout_action,
+        };
+        Ok((vec![single], Some("default".to_string())))
     }
 }
 
@@ -301,20 +305,33 @@ pub(crate) fn store_keyring_password(username: &str, password: &str) -> Result<(
     Ok(())
 }
 
-pub(crate) fn rewrite_password_to_sentinel(path: &std::path::Path) -> std::io::Result<()> {
-    let content = std::fs::read_to_string(path)?;
+fn rewrite_password_to_sentinel_content(content: &str, connection_name: &str) -> String {
     let mut new_content = String::new();
     let mut replaced = false;
 
+    let target_bare = format!("[connections.{}]", connection_name);
+    let target_quoted = format!("[connections.\"{}\"]", connection_name);
+    let has_connections_section = content.contains("[connections.");
+
+    let mut in_target_section = false;
+
     for line in content.lines() {
-        if !replaced && line.trim().starts_with("password") {
-            if line.contains('=') {
-                let indent = &line[..line.find("password").unwrap_or(0)];
-                new_content.push_str(&format!("{}password = \"{}\"", indent, KEYRING_SENTINEL));
-                replaced = true;
-            } else {
-                new_content.push_str(line);
-            }
+        let trimmed = line.trim();
+
+        if trimmed.starts_with('[') {
+            in_target_section = trimmed == target_bare || trimmed == target_quoted;
+        }
+
+        let should_replace = if has_connections_section {
+            in_target_section
+        } else {
+            !replaced
+        };
+
+        if should_replace && !replaced && trimmed.starts_with("password") && trimmed.contains('=') {
+            let indent = &line[..line.find("password").unwrap_or(0)];
+            new_content.push_str(&format!("{}password = \"{}\"", indent, KEYRING_SENTINEL));
+            replaced = true;
         } else {
             new_content.push_str(line);
         }
@@ -325,6 +342,15 @@ pub(crate) fn rewrite_password_to_sentinel(path: &std::path::Path) -> std::io::R
         new_content.pop();
     }
 
+    new_content
+}
+
+pub(crate) fn rewrite_password_to_sentinel(
+    path: &std::path::Path,
+    connection_name: &str,
+) -> std::io::Result<()> {
+    let content = std::fs::read_to_string(path)?;
+    let new_content = rewrite_password_to_sentinel_content(&content, connection_name);
     std::fs::write(path, new_content)
 }
 
@@ -767,6 +793,117 @@ mod timeout_tests {
         assert_eq!(
             config.statement_timeout,
             Some(Duration::from_secs(DEFAULT_STATEMENT_TIMEOUT_SECS))
+        );
+    }
+}
+
+#[cfg(test)]
+mod connection_config_tests {
+    use super::*;
+
+    #[test]
+    fn parse_table_format_connections() {
+        let toml = r#"
+default_connection = "dev"
+
+[connections.dev]
+host = "localhost"
+user = "gaussdb"
+password = "secret"
+dbname = "postgres"
+
+[connections.prod]
+host = "10.0.0.1"
+user = "admin"
+password = "keyring"
+dbname = "production"
+"#;
+        let config: MultiConfig = toml::from_str(toml).unwrap();
+        let (conns, default) = config.resolve().unwrap();
+        assert_eq!(default.as_deref(), Some("dev"));
+        assert_eq!(conns.len(), 2);
+
+        let dev = conns.iter().find(|c| c.name == "dev").unwrap();
+        assert_eq!(dev.host.as_deref(), Some("localhost"));
+        assert_eq!(dev.password.as_deref(), Some("secret"));
+
+        let prod = conns.iter().find(|c| c.name == "prod").unwrap();
+        assert_eq!(prod.host.as_deref(), Some("10.0.0.1"));
+        assert_eq!(prod.password.as_deref(), Some("keyring"));
+    }
+
+    #[test]
+    fn parse_flat_format_single_connection() {
+        let toml = r#"
+host = "localhost"
+user = "gaussdb"
+password = "secret"
+dbname = "postgres"
+"#;
+        let config: MultiConfig = toml::from_str(toml).unwrap();
+        let (conns, default) = config.resolve().unwrap();
+        assert_eq!(conns.len(), 1);
+        assert_eq!(conns[0].name, "default");
+        assert_eq!(default.as_deref(), Some("default"));
+    }
+
+    #[test]
+    fn parse_quoted_connection_name() {
+        let toml = r#"
+[connections."my-prod"]
+host = "localhost"
+"#;
+        let config: MultiConfig = toml::from_str(toml).unwrap();
+        let (conns, _) = config.resolve().unwrap();
+        assert_eq!(conns[0].name, "my-prod");
+    }
+
+    #[test]
+    fn rewrite_targets_correct_section_in_multi_connection() {
+        let content = r#"
+[connections.dev]
+host = "localhost"
+password = "already_keyring"
+
+[connections.ogagila]
+host = "localhost"
+password = "Enmo@123"
+"#;
+        let result = rewrite_password_to_sentinel_content(content, "ogagila");
+        let dev_section = result.split("[connections.ogagila]").next().unwrap();
+        assert!(
+            dev_section.contains("password = \"already_keyring\""),
+            "dev's password must be untouched"
+        );
+        assert!(
+            result.contains("[connections.ogagila]\nhost = \"localhost\"\npassword = \"keyring\""),
+            "ogagila's password must be rewritten to sentinel"
+        );
+    }
+
+    #[test]
+    fn rewrite_flat_config_replaces_first_password() {
+        let content = "host = \"localhost\"\npassword = \"secret\"\ndbname = \"postgres\"\n";
+        let result = rewrite_password_to_sentinel_content(content, "ignored");
+        assert!(result.contains("password = \"keyring\""));
+        assert!(!result.contains("password = \"secret\""));
+    }
+
+    #[test]
+    fn rewrite_does_not_touch_other_sections() {
+        let content = r#"
+[connections.dev]
+password = "dev_secret"
+
+[connections.staging]
+password = "staging_secret"
+"#;
+        let result = rewrite_password_to_sentinel_content(content, "dev");
+        assert!(result.contains("password = \"keyring\""));
+        let after_keyring = result.split("password = \"keyring\"").nth(1).unwrap();
+        assert!(
+            after_keyring.contains("password = \"staging_secret\""),
+            "staging password must remain plaintext"
         );
     }
 }

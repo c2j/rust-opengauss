@@ -133,28 +133,25 @@ dbname = "postgres"
 ```toml
 default_connection = "dev"
 
-[[connections]]
-name = "dev"
+[connections.dev]
 host = "127.0.0.1"
 port = 5432
 user = "gaussdb"
 password = "secret"
 dbname = "devdb"
 
-[[connections]]
-name = "prod"
+[connections.prod]
 host = "192.168.1.10"
 port = 5432
 user = "admin"
 password = "keyring"         # 存储在操作系统密钥链中
 dbname = "production"
 
-[[connections]]
-name = "staging"
+[connections.staging]
 url = "host=10.0.0.5 user=admin password=keyring dbname=staging sslmode=require"
 ```
 
-当存在 `[[connections]]` 时，顶层的 `host`、`user` 等字段将被忽略。当不存在时，这些字段将包装为单个 `"default"` 连接 — 完全向后兼容。
+当存在 `[connections.<name>]` 时，顶层的 `host`、`user` 等字段将被忽略。当不存在时，这些字段将包装为单个 `"default"` 连接 — 完全向后兼容。
 
 `default_connection` 指定在工具未提供 `connection_name` 时使用的默认连接，默认为第一个连接。
 
@@ -365,8 +362,7 @@ gaussdb-mcp store-password --name prod --config ~/.gaussdb-mcp.toml
 在配置文件中为每个连接设置超时参数：
 
 ```toml
-[[connections]]
-name = "prod"
+[connections.prod]
 host = "192.168.1.10"
 user = "admin"
 password = "keyring"

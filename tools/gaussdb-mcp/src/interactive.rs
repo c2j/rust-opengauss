@@ -429,7 +429,7 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
     if let (Some(path), Some(plaintext)) = (&target.config_path, &target.plaintext_password) {
         match store_keyring_password(&target.keyring_username, plaintext) {
             Ok(()) => {
-                if let Err(e) = rewrite_password_to_sentinel(path) {
+                if let Err(e) = rewrite_password_to_sentinel(path, &target.name) {
                     eprintln!(
                         "warning: password stored in keychain but failed to update config: {}",
                         e
