@@ -453,12 +453,12 @@ pub(crate) fn format_table(columns: &[String], rows: &[Vec<Value>]) -> String {
         return String::new();
     }
 
-    let mut col_widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
+    let mut col_widths: Vec<usize> = columns.iter().map(|c| c.chars().count()).collect();
     for row in rows {
         for (i, val) in row.iter().enumerate() {
             if i < col_widths.len() {
                 let val_str = value_to_string(val);
-                col_widths[i] = col_widths[i].max(val_str.len());
+                col_widths[i] = col_widths[i].max(val_str.chars().count());
             }
         }
     }
@@ -495,6 +495,79 @@ pub(crate) fn format_table(columns: &[String], rows: &[Vec<Value>]) -> String {
         result.push_str(&line);
         result.push('\n');
     }
+
+    result
+}
+
+/// Format query results as a table using Unicode box-drawing characters.
+/// This is the default format for interactive REPL mode.
+#[allow(dead_code)]
+pub(crate) fn format_table_boxed(columns: &[String], rows: &[Vec<Value>]) -> String {
+    if columns.is_empty() {
+        return String::new();
+    }
+
+    let mut col_widths: Vec<usize> = columns.iter().map(|c| c.chars().count()).collect();
+    for row in rows {
+        for (i, val) in row.iter().enumerate() {
+            if i < col_widths.len() {
+                let val_str = value_to_string(val);
+                col_widths[i] = col_widths[i].max(val_str.chars().count());
+            }
+        }
+    }
+
+    let make_cells = |values: &[String]| -> Vec<String> {
+        values
+            .iter()
+            .enumerate()
+            .map(|(i, s)| format!("{:width$}", s, width = col_widths[i]))
+            .collect()
+    };
+
+    // Top border:  ┌───┬───┐
+    let top: String = {
+        let parts: Vec<String> = col_widths.iter().map(|w| "─".repeat(w + 2)).collect();
+        format!("┌{}┐", parts.join("┬"))
+    };
+
+    // Header separator:  ├───┼───┤
+    let header_sep: String = {
+        let parts: Vec<String> = col_widths.iter().map(|w| "─".repeat(w + 2)).collect();
+        format!("├{}┤", parts.join("┼"))
+    };
+
+    // Bottom border:  └───┴───┘
+    let bottom: String = {
+        let parts: Vec<String> = col_widths.iter().map(|w| "─".repeat(w + 2)).collect();
+        format!("└{}┘", parts.join("┴"))
+    };
+
+    let format_row = |cells: &[String]| -> String {
+        let inner = cells.join(" │ ");
+        format!("│ {} │", inner)
+    };
+
+    let mut result = String::new();
+    result.push_str(&top);
+    result.push('\n');
+
+    let header_cells = make_cells(columns);
+    result.push_str(&format_row(&header_cells));
+    result.push('\n');
+
+    result.push_str(&header_sep);
+    result.push('\n');
+
+    for row in rows {
+        let cell_strs: Vec<String> = row.iter().map(value_to_string).collect();
+        let row_cells = make_cells(&cell_strs);
+        result.push_str(&format_row(&row_cells));
+        result.push('\n');
+    }
+
+    result.push_str(&bottom);
+    result.push('\n');
 
     result
 }
@@ -632,6 +705,113 @@ mod tests {
         let bytes = [0u8; 8];
         let s = format_interval(&bytes);
         assert!(s.contains("malformed"));
+    }
+
+    #[test]
+    fn boxed_empty_columns_returns_empty() {
+        let result = format_table_boxed(&[], &[]);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn boxed_single_cell() {
+        let columns = vec!["val".to_string()];
+        let rows = vec![vec![Value::String("x".to_string())]];
+        let result = format_table_boxed(&columns, &rows);
+        let expected = "\
+┌─────┐\n\
+│ val │\n\
+├─────┤\n\
+│ x   │\n\
+└─────┘\n";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn boxed_multiple_columns_rows() {
+        let columns = vec!["a".to_string(), "b".to_string()];
+        let rows = vec![
+            vec![
+                Value::String("1".to_string()),
+                Value::String("2".to_string()),
+            ],
+            vec![
+                Value::String("3".to_string()),
+                Value::String("4".to_string()),
+            ],
+        ];
+        let result = format_table_boxed(&columns, &rows);
+        let expected = "\
+┌───┬───┐\n\
+│ a │ b │\n\
+├───┼───┤\n\
+│ 1 │ 2 │\n\
+│ 3 │ 4 │\n\
+└───┴───┘\n";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn boxed_null_value_renders_as_null() {
+        let columns = vec!["name".to_string(), "status".to_string()];
+        let rows = vec![vec![Value::String("alice".to_string()), Value::Null]];
+        let result = format_table_boxed(&columns, &rows);
+        // "name"(4) vs "alice"(5) → col_width[0]=5; "status"(6) vs "NULL"(4) → col_width[1]=6
+        let expected = "\
+┌───────┬────────┐\n\
+│ name  │ status │\n\
+├───────┼────────┤\n\
+│ alice │ NULL   │\n\
+└───────┴────────┘\n";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn boxed_unicode_content() {
+        let columns = vec!["姓名".to_string()];
+        let rows = vec![vec![Value::String("张三".to_string())]];
+        let result = format_table_boxed(&columns, &rows);
+        // "姓名"/"张三" each → 2 chars → col_width = 2, dash run = 2+2 = 4
+        let expected = "\
+┌────┐\n\
+│ 姓名 │\n\
+├────┤\n\
+│ 张三 │\n\
+└────┘\n";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn boxed_consistent_with_format_table_semantics() {
+        let columns = vec!["col".to_string(), "other".to_string()];
+        let rows = vec![vec![
+            Value::String("hello".to_string()),
+            Value::String("world".to_string()),
+        ]];
+        let ascii = format_table(&columns, &rows);
+        let boxed = format_table_boxed(&columns, &rows);
+
+        // Both should use the same column widths: "col"(3) vs "hello"(5) → 5, "other"(5) vs "world"(5) → 5
+        // ASCII separator: "-----" + "-+-" + "-----"
+        let ascii_sep: Vec<&str> = ascii.lines().nth(1).unwrap().split("-+-").collect();
+        let ascii_widths: Vec<usize> = ascii_sep.iter().map(|s| s.chars().count()).collect();
+
+        // Boxed header separator: "├─────┼─────┤"
+        let boxed_sep = boxed.lines().nth(2).unwrap();
+        // Strip ├ ┤ ┼ to get dash runs (use chars() for safe UTF-8 indexing)
+        let boxed_inner: String = boxed_sep
+            .chars()
+            .skip(1)
+            .take(boxed_sep.chars().count() - 2)
+            .collect();
+        let boxed_dashes: Vec<&str> = boxed_inner.split("┼").collect();
+        let boxed_widths: Vec<usize> = boxed_dashes.iter().map(|s| s.chars().count()).collect();
+
+        // Boxed dash runs should be 2 longer than ASCII dash runs
+        assert_eq!(ascii_widths.len(), boxed_widths.len());
+        for (aw, bw) in ascii_widths.iter().zip(boxed_widths.iter()) {
+            assert_eq!(*bw, *aw + 2, "boxed dash run should be ASCII + 2");
+        }
     }
 }
 

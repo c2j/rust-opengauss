@@ -46,3 +46,5 @@ x509-parser = "0.17"
 rust_decimal = { version = "1.41", default-features = false, features = ["std"] }
 uuid = { version = "1", default-features = false, features = ["std"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+rustyline = "18"
+rustyline-derive = "0.12"

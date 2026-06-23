@@ -8,6 +8,7 @@ Built on the openGauss/PostgreSQL wire protocol (v3.0+) with **zero FFI dependen
 
 - **MCP Server** — 6 tools for database introspection via MCP protocol over stdio
 - **CLI Mode** — Execute SQL directly from terminal with `--sql`, `--file`, or stdin
+- **Interactive REPL** — `cli -i` drops into a readline-style SQL shell with history, multi-line input, and dot commands (`.help`, `.output`, `.save`, …)
 - **Multi-connection support** — Configure multiple named databases, switch per tool call
 - **OS keychain passwords** — Secure password storage via macOS Keychain / Windows Credential Manager / Linux Secret Service
 - **Auto password migration** — Plaintext passwords automatically migrate to OS keychain on first connection
@@ -82,6 +83,7 @@ gaussdb-mcp cli [OPTIONS]
 OPTIONS:
     -s, --sql <SQL>             SQL statement to execute
     -f, --file <FILE>           Read SQL from file
+    -i, --interactive           Enter interactive REPL mode (see Mode 3 below)
         --check-connection      Test connectivity without executing SQL
     -v, --verbose               Show detailed connection info (with --check-connection)
         --name <NAME>           Target connection name
@@ -121,6 +123,72 @@ gaussdb-mcp cli --name prod --sql "SELECT count(*) FROM orders"
 # Check connectivity for a specific connection
 gaussdb-mcp cli --check-connection --name prod
 ```
+
+### Mode 3: Interactive REPL
+
+```sh
+gaussdb-mcp cli -i                  # interactive REPL with default connection
+gaussdb-mcp cli --interactive        # same, long form
+gaussdb-mcp cli -i --name prod       # target a specific named connection
+gaussdb-mcp cli -i --format json     # default format for results (table/json/vertical/csv)
+```
+
+Drops you into a readline-style SQL shell:
+
+```
+gaussdb-mcp interactive — connected to 'dev' (postgres). Type .help for commands, .exit to quit.
+$ SELECT 1,
+> 2,
+> 3;
+┌──────────┬──────────┬──────────┐
+│ ?column? │ ?column? │ ?column? │
+├──────────┼──────────┼──────────┤
+│ 1        │ 2        │ 3        │
+└──────────┴──────────┴──────────┘
+(1 row)
+$
+```
+
+**Key bindings** (raw-mode via crossterm):
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Submit line (statements execute on `;`) |
+| `↑` / `↓` or `Ctrl-P` / `Ctrl-N` | Navigate history |
+| `←` / `→` or `Ctrl-B` / `Ctrl-F` | Move cursor |
+| `Home` / `End` or `Ctrl-A` / `Ctrl-E` | Jump to line start / end |
+| `Ctrl-U` / `Ctrl-K` | Delete to start / end of line |
+| `Ctrl-L` | Clear screen |
+| `Ctrl-C` | Abort current input (stay in REPL) |
+| `Ctrl-D` | Exit on empty line / delete char on non-empty |
+| `Backspace` / `Delete` | Delete previous / current char |
+
+**Dot commands** (must be the first token on a fresh prompt):
+
+| Command | Action |
+|---------|--------|
+| `.help` or `?` | Show help |
+| `.exit` / `.quit` | Exit the REPL |
+| `.history` | Show SQL execution history (current session) |
+| `.clear` / `.cls` | Clear screen |
+| `.output <file>` | Redirect all subsequent SQL output to `file` (append mode) |
+| `.output` | Reset SQL output back to stdout |
+| `.save <file> [format]` | One-shot save of the most recent query result to `file` (overwrite; format optional, defaults to `--format`) |
+
+```sh
+# Inside the REPL:
+$ .output session.log      # all queries append to session.log
+$ SELECT * FROM users;
+$ .output                  # back to stdout
+$ .save users.csv csv      # re-render last result as CSV to users.csv
+$ .exit
+```
+
+Notes:
+- Statements execute only on `;` outside quotes/comments (`'...'`, `"..."`, `--`, `/* ... */`).
+- SQL errors print to stderr and the REPL continues.
+- History deduplicates consecutive identical statements.
+- For very large exports, prefer one-shot `cli --format csv` over the REPL — the REPL buffers results to support `.save`.
 
 ## Configuration
 
@@ -195,6 +263,7 @@ STORE-PASSWORD:
 CLI:
     -s, --sql <SQL>            SQL statement to execute
     -f, --file <FILE>          Read SQL from file (or pipe to stdin)
+    -i, --interactive          Enter interactive REPL mode (see Mode 3)
         --check-connection     Test connectivity without executing SQL
     -v, --verbose              Show detailed connection info (with --check-connection)
         --format <FMT>         Output format: table, json, vertical, csv [default: table]
