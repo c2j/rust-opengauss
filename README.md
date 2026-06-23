@@ -298,11 +298,14 @@ The diagnostic tool:
 ### Password Management
 
 ```sh
-# Store password for the first/default connection
-gaussdb-mcp store-password 'MyP@ss123' --config ~/.gaussdb-mcp.toml
+# Store password for the first/default connection (interactive prompt)
+gaussdb-mcp store-password --config ~/.gaussdb-mcp.toml
 
 # Store password for a named connection
-gaussdb-mcp store-password 'Pr0dP@ss' --name prod --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password --name prod --config ~/.gaussdb-mcp.toml
+
+# Non-interactive (read from stdin pipe, e.g. CI/scripts):
+#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name prod --config ~/.gaussdb-mcp.toml
 
 # On first successful MCP connection with plaintext config password,
 # auto-migration moves it to OS keychain and updates config to `password = "keyring"`

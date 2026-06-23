@@ -223,11 +223,14 @@ gaussdb-mcp cli --check-connection --name prod -v
 ### 密码管理
 
 ```sh
-# 为第一个/默认连接存储密码
-gaussdb-mcp store-password 'MyP@ss123' --config ~/.gaussdb-mcp.toml
+# 为第一个/默认连接存储密码（交互式提示输入）
+gaussdb-mcp store-password --config ~/.gaussdb-mcp.toml
 
 # 为命名连接存储密码
-gaussdb-mcp store-password 'Pr0dP@ss' --name prod --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password --name prod --config ~/.gaussdb-mcp.toml
+
+# 非交互模式（从 stdin 管道读取，适用于 CI/脚本）：
+#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name prod --config ~/.gaussdb-mcp.toml
 
 # 首次成功 MCP 连接时，配置文件中的明文密码会自动迁移
 # 至操作系统密钥链，配置文件更新为 password = "keyring"
