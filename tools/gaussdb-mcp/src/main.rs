@@ -1033,6 +1033,7 @@ async fn run_mcp_server(config_path: Option<String>) {
                     let path = path.clone();
                     let plaintext = plaintext.clone();
                     let keyring_user = keyring_username.clone();
+                    let conn_name_for_cb = conn_name.clone();
                     let migrated = Arc::new(std::sync::atomic::AtomicBool::new(false));
                     let cb = Arc::new(move || {
                         if migrated.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1048,7 +1049,9 @@ async fn run_mcp_server(config_path: Option<String>) {
                                 "failed to store password in keychain: {} (config file NOT modified)",
                                 e
                             );
-                        } else if let Err(e) = rewrite_password_to_sentinel(&path) {
+                        } else if let Err(e) =
+                            rewrite_password_to_sentinel(&path, &conn_name_for_cb)
+                        {
                             warn!("failed to update config file: {}", e);
                         } else {
                             info!(
