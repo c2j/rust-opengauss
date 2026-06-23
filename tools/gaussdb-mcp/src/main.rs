@@ -55,11 +55,8 @@ enum Commands {
         verbose: bool,
     },
 
-    /// Store password in OS keychain
-    StorePassword {
-        /// Password to store
-        password: String,
-    },
+    /// Store password in OS keychain (prompts interactively; reads from stdin when piped)
+    StorePassword {},
 
     /// Execute SQL from command line
     Cli {
@@ -179,7 +176,40 @@ fn check_keyring_available(username: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn handle_store_password(password: String, name: Option<String>, config_path: Option<String>) {
+fn read_password_secure() -> Result<String, String> {
+    use std::io::IsTerminal;
+
+    if std::io::stdin().is_terminal() {
+        let pw1 = rpassword::prompt_password("Enter password: ")
+            .map_err(|e| format!("failed to read password: {}", e))?;
+        if pw1.is_empty() {
+            return Err("password cannot be empty".to_string());
+        }
+        let pw2 = rpassword::prompt_password("Confirm password: ")
+            .map_err(|e| format!("failed to read password: {}", e))?;
+        if pw1 != pw2 {
+            return Err("passwords do not match".to_string());
+        }
+        Ok(pw1)
+    } else {
+        let mut input = String::new();
+        std::io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| format!("failed to read password from stdin: {}", e))?;
+        let pw = input.trim_end_matches(['\r', '\n']).to_string();
+        if pw.is_empty() {
+            return Err("password from stdin cannot be empty".to_string());
+        }
+        Ok(pw)
+    }
+}
+
+fn handle_store_password(name: Option<String>, config_path: Option<String>) {
+    let password = read_password_secure().unwrap_or_else(|e| {
+        eprintln!("error: {}", e);
+        std::process::exit(1);
+    });
+
     let config_path = config_path
         .map(PathBuf::from)
         .or_else(default_config_path)
@@ -1123,8 +1153,8 @@ async fn main() {
             let config_path = cli.config.map(PathBuf::from);
             handle_check_connection_cmd(cli.name, verbose, config_path).await;
         }
-        Some(Commands::StorePassword { password }) => {
-            handle_store_password(password, cli.name, cli.config);
+        Some(Commands::StorePassword {}) => {
+            handle_store_password(cli.name, cli.config);
         }
         Some(Commands::Cli {
             sql,
