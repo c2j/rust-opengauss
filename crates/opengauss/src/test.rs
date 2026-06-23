@@ -528,5 +528,22 @@ fn is_closed() {
 
     assert!(!client.is_closed());
     client.check_connection().unwrap_err();
-    assert!(client.is_closed());
+
+    // The TCP close after backend termination is asynchronous: the FATAL
+    // ErrorResponse is delivered to `check_connection`'s response channel
+    // before the Connection future reads EOF from the socket. Drive the
+    // Connection future (via further `check_connection` calls) until it
+    // detects the close and `is_closed` becomes true.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if client.is_closed() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "client did not report closed within 10s after backend termination"
+        );
+        let _ = client.check_connection();
+        thread::sleep(Duration::from_millis(50));
+    }
 }
