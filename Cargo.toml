@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/gaussdb",
     "crates/opengauss",
     "crates/opengauss-derive",
     "crates/opengauss-native-tls",
