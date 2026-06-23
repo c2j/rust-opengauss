@@ -466,14 +466,15 @@ RUST_LOG=gaussdb_mcp=debug gaussdb-mcp
 
 本仓库是一个 Rust 工作区，包含：
 
+- **`crates/gaussdb`** — 面向外部用户的统一公开入口。默认提供异步 `gaussdb::Client`（重新导出 tokio-opengauss），通过 `sync` 特性可使用同步 `gaussdb::sync::Client`，TLS 与类型分别通过 `gaussdb::native_tls`、`gaussdb::openssl` 和 `gaussdb::types` 暴露。
 - **`tools/gaussdb-mcp`** — MCP 服务器 + CLI 工具（本文档的重点）
-- **`crates/tokio-opengauss`** — 异步 openGauss/PostgreSQL 客户端
-- **`crates/opengauss`** — 同步 openGauss/PostgreSQL 客户端
-- **`crates/opengauss-derive`** — 类型派生的过程宏
-- **`crates/opengauss-protocol`** — 线协议 v3.0+ 实现
-- **`crates/opengauss-types`** — 类型系统及序列化
-- **`crates/opengauss-native-tls`** — tokio-opengauss 的 Native TLS 连接器
-- **`crates/opengauss-openssl`** — tokio-opengauss 的 OpenSSL TLS 连接器
+- **`crates/tokio-opengauss`** — 异步 openGauss/PostgreSQL 客户端（内部构建模块，`publish = false`）
+- **`crates/opengauss`** — 同步 openGauss/PostgreSQL 客户端（内部构建模块，`publish = false`）
+- **`crates/opengauss-derive`** — 类型派生的过程宏（内部构建模块，`publish = false`）
+- **`crates/opengauss-protocol`** — 线协议 v3.0+ 实现（内部构建模块，`publish = false`）
+- **`crates/opengauss-types`** — 类型系统及序列化（内部构建模块，`publish = false`）
+- **`crates/opengauss-native-tls`** — tokio-opengauss 的 Native TLS 连接器（内部构建模块，`publish = false`）
+- **`crates/opengauss-openssl`** — tokio-opengauss 的 OpenSSL TLS 连接器（内部构建模块，`publish = false`）
 - **`tools/codegen`** — 从 PostgreSQL 目录数据生成代码
 
 详见 [docs/DeveloperGuide.md](docs/DeveloperGuide.md)（库使用）和 [CONTRIBUTION.md](CONTRIBUTION.md)（贡献指南）。

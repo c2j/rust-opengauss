@@ -541,14 +541,15 @@ RUST_LOG=gaussdb_mcp=debug gaussdb-mcp
 
 This repository is a Rust workspace containing:
 
+- **`crates/gaussdb`** — Unified public entry point for external consumers. `gaussdb::Client` is async by default (re-exports tokio-opengauss), `gaussdb::sync::Client` is available via the `sync` feature, and TLS and types are exposed through `gaussdb::native_tls`, `gaussdb::openssl`, and `gaussdb::types`.
 - **`tools/gaussdb-mcp`** — The MCP server + CLI tool (this README's primary focus)
-- **`crates/tokio-opengauss`** — Async openGauss/PostgreSQL client
-- **`crates/opengauss`** — Synchronous openGauss/PostgreSQL client
-- **`crates/opengauss-derive`** — Proc macros for type derivation
-- **`crates/opengauss-protocol`** — Wire protocol v3.0+ implementation
-- **`crates/opengauss-types`** — Type system and serialization
-- **`crates/opengauss-native-tls`** — Native TLS connector for tokio-opengauss
-- **`crates/opengauss-openssl`** — OpenSSL TLS connector for tokio-opengauss
+- **`crates/tokio-opengauss`** — Async openGauss/PostgreSQL client (internal building block, `publish = false`)
+- **`crates/opengauss`** — Synchronous openGauss/PostgreSQL client (internal building block, `publish = false`)
+- **`crates/opengauss-derive`** — Proc macros for type derivation (internal building block, `publish = false`)
+- **`crates/opengauss-protocol`** — Wire protocol v3.0+ implementation (internal building block, `publish = false`)
+- **`crates/opengauss-types`** — Type system and serialization (internal building block, `publish = false`)
+- **`crates/opengauss-native-tls`** — Native TLS connector for tokio-opengauss (internal building block, `publish = false`)
+- **`crates/opengauss-openssl`** — OpenSSL TLS connector for tokio-opengauss (internal building block, `publish = false`)
 - **`tools/codegen`** — Code generation from PostgreSQL catalog data
 
 See [docs/DeveloperGuide.md](docs/DeveloperGuide.md) for library usage and [CONTRIBUTION.md](CONTRIBUTION.md) for contributing.
