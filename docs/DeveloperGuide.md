@@ -1,11 +1,12 @@
 # Developer Guide
 
-This guide is for developers who want to use the `rust-opengauss` library crates directly, extend the MCP server, or build custom tools on top of the wire protocol implementation.
+This guide is for developers who want to use the `gaussdb` public crate, extend the MCP server, or build custom tools on top of the wire protocol implementation. External projects should depend on `gaussdb`; the other workspace crates are internal (`publish = false`) and documented here for contributors.
 
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)
 - [Crate Reference](#crate-reference)
+  - [gaussdb](#gaussdb-public-entry-point)
   - [tokio-opengauss](#tokio-opengauss-async-client)
   - [opengauss](#opengauss-sync-client)
   - [opengauss-protocol](#opengauss-protocol)
@@ -25,56 +26,150 @@ This guide is for developers who want to use the `rust-opengauss` library crates
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                     Applications                     │
-├──────────────┬──────────────────┬───────────────────┤
-│  MCP Server  │   Custom Tools   │  Web Services     │
-│ (gaussdb-mcp)│                  │                   │
-└──────┬───────┴────────┬─────────┴──────────┬────────┘
-       │                │                    │
-       ▼                ▼                    ▼
-┌──────────────┐ ┌──────────────┐  ┌──────────────────┐
-│ opengauss    │ │tokio-opengauss│ │ Your Code        │
-│ (sync API)   │ │ (async API)  │  │                  │
-└──────┬───────┘ └──────┬───────┘  └──────────────────┘
-       │                │
-       └────────┬───────┘
-                ▼
-┌──────────────────────────────────────────────────────┐
-│              opengauss-protocol                        │
-│   Message types, wire format encoding/decoding        │
-│   Authentication: MD5, SCRAM, SHA256, SM3            │
-└──────────────────────┬───────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                         Applications                             │
+├──────────────┬──────────────────┬───────────────────────────────┤
+│  MCP Server  │   Custom Tools   │  Web Services / Your Code     │
+│ (gaussdb-mcp)│                  │                               │
+└──────┬───────┴────────┬─────────┴────────────────┬──────────────┘
+       │                │                        │
+       ▼                ▼                        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                          gaussdb                                 │
+│              Public facade (async + sync APIs)                   │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+       ┌───────────────────────┴───────────────────────┐
+       ▼                                               ▼
+┌──────────────┐                          ┌──────────────────┐
+│tokio-opengauss│                         │ opengauss        │
+│ (async core) │   (internal crates)      │ (sync wrapper)   │
+└──────┬───────┘                          └────────┬─────────┘
+       │                                           │
+       └───────────────────┬───────────────────────┘
+                           ▼
+┌──────────────────────────────────────────────────────────────────┐
+│              opengauss-protocol                                    │
+│   Message types, wire format encoding/decoding                    │
+│   Authentication: MD5, SCRAM, SHA256, SM3                         │
+└──────────────────────┬───────────────────────────────────────────┘
                        │
                        ▼
-┌──────────────────────────────────────────────────────┐
-│                opengauss-types                        │
-│   ToSql / FromSql traits, type mapping, OID system   │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                opengauss-types                                     │
+│   ToSql / FromSql traits, type mapping, OID system                │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Design Principles
 
-1. **Zero FFI** — No C dependencies (no libpq). Pure Rust wire protocol implementation.
-2. **Composability** — Protocol, types, and client are separate crates for flexible composition.
-3. **TLS pluggable** — TLS is abstracted; choose native-tls or openssl connector.
-4. **PostgreSQL compatible** — openGauss uses the PostgreSQL wire protocol v3.0+, so this works with both.
+1. **Zero FFI**: No C dependencies (no libpq). Pure Rust wire protocol implementation.
+2. **Composability**: Protocol, types, and client are separate crates for flexible composition.
+3. **TLS pluggable**: TLS is abstracted; choose native-tls or openssl connector.
+4. **PostgreSQL compatible**: openGauss uses the PostgreSQL wire protocol v3.0+, so this works with both.
 
 ---
 
 ## Crate Reference
 
-### tokio-opengauss (Async Client)
+### gaussdb (Public Entry Point)
 
-**Crate**: `crates/tokio-opengauss`  
-**Cargo**: `tokio-opengauss = "0.7.17"`  
-**Description**: Asynchronous openGauss/PostgreSQL client built on tokio.
+**Crate**: `crates/gaussdb`  
+**Cargo**: `gaussdb = "0.1.0"`  
+**Description**: The single public entry point for external consumers. `gaussdb` re-exports the async surface from `tokio-opengauss` at the crate root by default, and exposes a synchronous API under `gaussdb::sync` when the `sync` feature is enabled.
+
+> **Note**: All other workspace crates (`opengauss`, `tokio-opengauss`, `opengauss-protocol`, `opengauss-types`, `opengauss-derive`, `opengauss-native-tls`, `opengauss-openssl`) are now `publish = false` internal crates. They remain workspace members for layering, but external projects should depend only on `gaussdb`.
 
 #### Key Types
 
 | Type | Description |
 |------|-------------|
-| `Client` | Main async client — query, execute, prepare, copy, transactions |
+| `Client` | Async client: query, execute, prepare, copy, transactions |
+| `sync::Client` | Sync client: same API shape, runs on an internal tokio Runtime |
+| `Config` | Connection configuration builder |
+| `Statement` | Prepared statement |
+| `Row` | Query result row |
+| `NoTls` | Marker type for no-TLS connections |
+| `types::ToSql` / `types::FromSql` | Type conversion traits (shared across sync/async) |
+
+#### Basic Usage (Async)
+
+```rust
+use gaussdb::{Config, NoTls};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Parse connection string
+    let config: Config = "host=localhost user=postgres password=secret dbname=mydb"
+        .parse()?;
+
+    // Connect
+    let (client, connection) = config.connect(NoTls).await?;
+
+    // Spawn the connection handler
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("connection error: {}", e);
+        }
+    });
+
+    // Execute a query
+    let rows = client.query("SELECT id, name FROM users WHERE active = $1", &[&true]).await?;
+
+    for row in &rows {
+        let id: i32 = row.get(0);
+        let name: &str = row.get(1);
+        println!("{}: {}", id, name);
+    }
+
+    Ok(())
+}
+```
+
+#### Sync Usage
+
+Enable the `sync` feature:
+
+```toml
+[dependencies]
+gaussdb = { version = "0.1.0", features = ["sync"] }
+```
+
+```rust
+use gaussdb::sync::{Client, NoTls};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Client::connect(
+        "host=localhost user=postgres password=secret dbname=mydb",
+        NoTls,
+    )?;
+
+    let rows = client.query("SELECT id, name FROM users", &[])?;
+    for row in &rows {
+        let id: i32 = row.get(0);
+        let name: &str = row.get(1);
+        println!("{}: {}", id, name);
+    }
+
+    Ok(())
+}
+```
+
+The sync client internally spawns a tokio runtime and blocks on async futures. For performance-critical applications, prefer the async API.
+
+---
+
+### tokio-opengauss (Async Client)
+
+**Crate**: `crates/tokio-opengauss`  
+**Cargo**: internal crate (`publish = false`)  
+**Description**: Asynchronous openGauss/PostgreSQL client built on tokio. This section is kept for internal contributors; external users should use `gaussdb` instead.
+
+#### Key Types
+
+| Type | Description |
+|------|-------------|
+| `Client` | Main async client: query, execute, prepare, copy, transactions |
 | `Connection` | Background connection task (spawn with `tokio::spawn`) |
 | `Config` | Connection configuration builder |
 | `Statement` | Prepared statement |
@@ -173,14 +268,14 @@ let (client, connection) = config.connect(tls).await?;
 ### opengauss (Sync Client)
 
 **Crate**: `crates/opengauss`  
-**Cargo**: `opengauss = "0.19.13"`  
-**Description**: Synchronous wrapper around `tokio-opengauss`. Useful when you don't need async I/O.
+**Cargo**: internal crate (`publish = false`)  
+**Description**: Synchronous wrapper around `tokio-opengauss`. The public sync API is exposed through `gaussdb::sync` (requires the `sync` feature). This section is kept for internal contributors; external users should use `gaussdb` with `features = ["sync"]`.
 
 #### Key Types
 
 | Type | Description |
 |------|-------------|
-| `Client` | Synchronous client — query, execute, prepare, transactions |
+| `Client` | Synchronous client: query, execute, prepare, transactions |
 | `Config` | Connection configuration |
 | `Transaction` | Transaction handle |
 | `BinaryCopyInWriter` | COPY FROM writer |
@@ -189,7 +284,7 @@ let (client, connection) = config.connect(tls).await?;
 #### Basic Usage
 
 ```rust
-use opengauss::{Client, NoTls};
+use gaussdb::sync::{Client, NoTls};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = Client::connect(
@@ -208,7 +303,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-The sync client internally spawns a tokio runtime. For performance-critical applications, prefer `tokio-opengauss` directly.
+The sync client internally spawns a tokio runtime. For performance-critical applications, prefer the async API.
 
 ---
 
@@ -298,7 +393,7 @@ use tokio_util::codec::Framed;
 ### opengauss-types
 
 **Crate**: `crates/opengauss-types`  
-**Description**: Type system — `ToSql` and `FromSql` traits, OID mappings, type conversion.
+**Description**: Type system: `ToSql` and `FromSql` traits, OID mappings, type conversion.
 
 #### Key Traits
 
@@ -332,7 +427,7 @@ pub trait FromSql<'a>: Sized {
 
 #### Optional Type Support (Feature Flags)
 
-Enable with feature flags on `tokio-opengauss`:
+Enable with feature flags on `gaussdb`:
 
 | Feature | Type Support |
 |---------|-------------|
@@ -352,7 +447,7 @@ Enable with feature flags on `tokio-opengauss`:
 **Description**: Proc macros for `#[derive(ToSql, FromSql)]`.
 
 ```rust
-use opengauss_types::{ToSql, FromSql};
+use gaussdb::types::{ToSql, FromSql};
 
 #[derive(Debug, ToSql, FromSql)]
 #[opengauss(name = "my_type")]  // maps to a custom PostgreSQL type
@@ -366,20 +461,20 @@ struct MyType {
 
 ### opengauss-native-tls / opengauss-openssl
 
-**Description**: TLS connector implementations for `tokio-opengauss`.
+**Description**: TLS connector implementations used internally by `tokio-opengauss`. External users consume these through the `gaussdb` facade.
 
-- `opengauss-native-tls` uses the `native-tls` crate (platform-native TLS: SChannel on Windows, Secure Transport on macOS, OpenSSL on Linux)
-- `opengauss-openssl` uses the `openssl` crate directly
+- `gaussdb::native_tls::MakeTlsConnector` (feature `tls-native-tls`) uses the `native-tls` crate (platform-native TLS: SChannel on Windows, Secure Transport on macOS, OpenSSL on Linux)
+- `gaussdb::openssl::MakeTlsConnector` (feature `tls-openssl`) uses the `openssl` crate directly
 
-Both implement the `TlsConnect` trait expected by `tokio-opengauss::connect()`.
+Both implement the `TlsConnect` trait expected by `gaussdb::connect()`.
 
 ```rust
-use opengauss_native_tls::MakeTlsConnector;
+use gaussdb::native_tls::MakeTlsConnector;
 use native_tls::TlsConnector;
 
 let connector = TlsConnector::new()?;  // or builder with custom options
 let tls = MakeTlsConnector::new(connector);
-let (client, connection) = tokio_opengauss::connect("host=... sslmode=require", tls).await?;
+let (client, connection) = gaussdb::connect("host=... sslmode=require", tls).await?;
 ```
 
 ---
@@ -472,17 +567,20 @@ Sync
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-tokio-opengauss = "0.7.17"
-# Optional: TLS
-opengauss-native-tls = "0.5.3"
-native-tls = "0.2"
+gaussdb = "0.1.0"
+# Optional TLS
+#gaussdb = { version = "0.1.0", features = ["tls-native-tls"] }
+# Optional type extensions:
+#   with-chrono-0_4, with-uuid-1, with-serde_json-1, with-rust_decimal-1, etc.
 ```
 
 **Sync:**
 
 ```toml
 [dependencies]
-opengauss = "0.19.13"
+gaussdb = { version = "0.1.0", features = ["sync"] }
+# With TLS and type extensions:
+#gaussdb = { version = "0.1.0", features = ["tls-native-tls", "sync", "with-chrono-0_4"] }
 ```
 
 ### Connection URLs
@@ -497,7 +595,7 @@ host=db.example.com user=admin password=secret dbname=production sslmode=require
 Or use `Config` builder:
 
 ```rust
-let config = tokio_opengauss::Config::new()
+let config = gaussdb::Config::new()
     .host("localhost")
     .port(5432)
     .user("postgres")
@@ -517,13 +615,13 @@ deadpool-postgres = "0.14"  # or bb8-postgres, mobc-postgres
 
 ```rust
 use deadpool_postgres::{Config, Pool};
-// deadpool-postgres can work with tokio-opengauss through the Manager trait
+// deadpool-postgres can work with gaussdb through the Manager trait
 ```
 
 ### Error Handling
 
 ```rust
-use tokio_opengauss::error::SqlState;
+use gaussdb::error::SqlState;
 
 match client.query("SELECT * FROM nonexistent", &[]).await {
     Err(e) => {
@@ -657,7 +755,28 @@ Client                          Server
 
 ## Feature Flags
 
+### gaussdb
+
+`gaussdb` forwards feature flags to `tokio-opengauss`, which in turn forwards them to `opengauss-types`:
+
+| Feature | Default | Description |
+|---------|---------|-------------|
+| `sync` | No | Enable `gaussdb::sync` synchronous API |
+| `tls-native-tls` | No | Enable `gaussdb::native_tls::MakeTlsConnector` |
+| `tls-openssl` | No | Enable `gaussdb::openssl::MakeTlsConnector` |
+| `derive` | No | Enable `#[derive(ToSql, FromSql)]` via `opengauss-derive` |
+| `runtime` | Yes | Forwarded to `tokio-opengauss` |
+| `with-chrono-0_4` | No | Forwarded to `tokio-opengauss` / `opengauss-types` |
+| `with-uuid-1` | No | Forwarded to `tokio-opengauss` / `opengauss-types` |
+| `with-serde_json-1` | No | Forwarded to `tokio-opengauss` / `opengauss-types` |
+| `with-time-0_3` | No | Forwarded to `tokio-opengauss` / `opengauss-types` |
+| `with-geo-types-0_7` | No | Forwarded to `tokio-opengauss` / `opengauss-types` |
+| `with-eui48-1` | No | Forwarded to `tokio-opengauss` / `opengauss-types` |
+| `with-smol_str-01` | No | Forwarded to `tokio-opengauss` / `opengauss-types` |
+
 ### tokio-opengauss
+
+Internal crate (`publish = false`). Features are listed here for contributors; end users enable them through `gaussdb`.
 
 | Feature | Default | Description |
 |---------|---------|-------------|
@@ -673,11 +792,11 @@ Client                          Server
 
 ### opengauss (sync)
 
-All features are forwarded to `tokio-opengauss`:
+Internal crate (`publish = false`). The sync API is exposed publicly through `gaussdb::sync` with `features = ["sync"]`:
 
 ```toml
 [dependencies]
-opengauss = { version = "0.19.13", features = ["with-chrono-0_4", "with-uuid-1"] }
+gaussdb = { version = "0.1.0", features = ["sync", "with-chrono-0_4", "with-uuid-1"] }
 ```
 
 ---
@@ -694,7 +813,7 @@ opengauss = { version = "0.19.13", features = ["with-chrono-0_4", "with-uuid-1"]
 
 - The MCP server restricts `execute_query` to `SELECT` and `EXPLAIN` only (read-only).
 - CLI mode allows all statements but requires explicit user invocation.
-- Always use parameterized queries (`$1`, `$2`) — never string interpolation.
+- Always use parameterized queries (`$1`, `$2`); never string interpolation.
 
 ### TLS
 

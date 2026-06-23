@@ -1,11 +1,12 @@
 # 开发者指南
 
-本指南面向希望直接使用 `rust-opengauss` 库 crate、扩展 MCP 服务器，或在线协议实现之上构建自定义工具的开发者。
+本指南面向希望使用 `gaussdb` 公共 crate、扩展 MCP 服务器，或在线协议实现之上构建自定义工具的开发者。外部项目应依赖 `gaussdb`；其他工作区 crate 均为内部 crate（`publish = false`），本文档中为贡献者保留其说明。
 
 ## 目录
 
 - [架构概览](#架构概览)
 - [Crate 参考](#crate-参考)
+  - [gaussdb](#gaussdb-公共入口)
   - [tokio-opengauss](#tokio-opengauss-异步客户端)
   - [opengauss](#opengauss-同步客户端)
   - [opengauss-protocol](#opengauss-protocol)
@@ -25,56 +26,152 @@
 ## 架构概览
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                     应用层                           │
-├──────────────┬──────────────────┬───────────────────┤
-│  MCP 服务器   │   自定义工具      │    Web 服务       │
-│ (gaussdb-mcp)│                  │                   │
-└──────┬───────┴────────┬─────────┴──────────┬────────┘
-       │                │                    │
-       ▼                ▼                    ▼
-┌──────────────┐ ┌──────────────┐  ┌──────────────────┐
-│ opengauss    │ │tokio-opengauss│ │   您的代码        │
-│ (同步 API)   │ │ (异步 API)   │  │                  │
-└──────┬───────┘ └──────┬───────┘  └──────────────────┘
-       │                │
-       └────────┬───────┘
-                ▼
-┌──────────────────────────────────────────────────────┐
-│              opengauss-protocol                        │
-│   消息类型、线格式编解码                                │
-│   认证：MD5、SCRAM、SHA256、SM3                        │
-└──────────────────────┬───────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                          应用层                                  │
+├──────────────┬──────────────────┬───────────────────────────────┤
+│  MCP 服务器   │   自定义工具      │  Web 服务 / 您的代码          │
+│ (gaussdb-mcp)│                  │                               │
+└──────┬───────┴────────┬─────────┴────────────────┬──────────────┘
+       │                │                        │
+       ▼                ▼                        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                          gaussdb                                 │
+│                  公共门面（异步 + 同步 API）                      │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+       ┌───────────────────────┴───────────────────────┐
+       ▼                                               ▼
+┌──────────────┐                          ┌──────────────────┐
+│tokio-opengauss│                         │ opengauss        │
+│（异步核心）   │   （内部 crate）         │（同步封装）      │
+└──────┬───────┘                          └────────┬─────────┘
+       │                                           │
+       └───────────────────┬───────────────────────┘
+                           ▼
+┌──────────────────────────────────────────────────────────────────┐
+│              opengauss-protocol                                    │
+│   消息类型、线格式编解码                                            │
+│   认证：MD5、SCRAM、SHA256、SM3                                    │
+└──────────────────────┬───────────────────────────────────────────┘
                        │
                        ▼
-┌──────────────────────────────────────────────────────┐
-│                opengauss-types                        │
-│   ToSql / FromSql trait、类型映射、OID 系统            │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                opengauss-types                                     │
+│   ToSql / FromSql trait、类型映射、OID 系统                        │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ### 核心设计原则
 
-1. **零 FFI** — 无 C 依赖（无需 libpq）。纯 Rust 线协议实现。
-2. **可组合性** — 协议、类型和客户端位于独立的 crate 中，灵活组合。
-3. **可插拔 TLS** — TLS 是抽象的；可选择 native-tls 或 openssl 连接器。
-4. **PostgreSQL 兼容** — openGauss 使用 PostgreSQL 线协议 v3.0+，因此本框架同时兼容两者。
+1. **零 FFI**：无 C 依赖（无需 libpq）。纯 Rust 线协议实现。
+2. **可组合性**：协议、类型和客户端位于独立的 crate 中，灵活组合。
+3. **可插拔 TLS**：TLS 是抽象的；可选择 native-tls 或 openssl 连接器。
+4. **PostgreSQL 兼容**：openGauss 使用 PostgreSQL 线协议 v3.0+，因此本框架同时兼容两者。
 
 ---
 
 ## Crate 参考
 
-### tokio-opengauss（异步客户端）
+### gaussdb（公共入口）
 
-**Crate**：`crates/tokio-opengauss`  
-**Cargo**：`tokio-opengauss = "0.7.17"`  
-**描述**：基于 tokio 构建的异步 openGauss/PostgreSQL 客户端。
+**Crate**：`crates/gaussdb`  
+**Cargo**：`gaussdb = "0.1.0"`  
+**描述**：外部使用者的唯一公共入口点。默认情况下，`gaussdb` 在 crate 根重新导出 `tokio-opengauss` 的异步接口；启用 `sync` 特性后，`gaussdb::sync` 暴露同步 API。
+
+> **注意**：其他所有工作区 crate（`opengauss`、`tokio-opengauss`、`opengauss-protocol`、`opengauss-types`、`opengauss-derive`、`opengauss-native-tls`、`opengauss-openssl`）现在均为 `publish = false` 的内部 crate。它们仍作为工作区成员保留以维持内部分层，但外部项目应只依赖 `gaussdb`。
 
 #### 关键类型
 
 | 类型 | 描述 |
 |------|-------------|
-| `Client` | 主异步客户端 — 查询、执行、预编译、COPY、事务 |
+| `Client` | 异步客户端：查询、执行、预编译、COPY、事务 |
+| `sync::Client` | 同步客户端：相同 API 形态，在内部 tokio Runtime 上运行 |
+| `Config` | 连接配置构建器 |
+| `Statement` | 预编译语句 |
+| `Row` | 查询结果行 |
+| `NoTls` | 无 TLS 连接的标记类型 |
+| `types::ToSql` / `types::FromSql` | 类型转换 trait（同步/异步共享） |
+
+#### 基本用法（异步）
+
+```rust
+use gaussdb::{Config, NoTls};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 解析连接字符串
+    let config: Config = "host=localhost user=postgres password=secret dbname=mydb"
+        .parse()?;
+
+    // 连接
+    let (client, connection) = config.connect(NoTls).await?;
+
+    // 启动连接处理任务
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("连接错误: {}", e);
+        }
+    });
+
+    // 执行查询
+    let rows = client
+        .query("SELECT id, name FROM users WHERE active = $1", &[&true])
+        .await?;
+
+    for row in &rows {
+        let id: i32 = row.get(0);
+        let name: &str = row.get(1);
+        println!("{}: {}", id, name);
+    }
+
+    Ok(())
+}
+```
+
+#### 同步用法
+
+启用 `sync` 特性：
+
+```toml
+[dependencies]
+gaussdb = { version = "0.1.0", features = ["sync"] }
+```
+
+```rust
+use gaussdb::sync::{Client, NoTls};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Client::connect(
+        "host=localhost user=postgres password=secret dbname=mydb",
+        NoTls,
+    )?;
+
+    let rows = client.query("SELECT id, name FROM users", &[])?;
+    for row in &rows {
+        let id: i32 = row.get(0);
+        let name: &str = row.get(1);
+        println!("{}: {}", id, name);
+    }
+
+    Ok(())
+}
+```
+
+同步客户端内部会启动一个 tokio 运行时并阻塞等待异步 future。对于性能敏感的应用，建议使用异步 API。
+
+---
+
+### tokio-opengauss（异步客户端）
+
+**Crate**：`crates/tokio-opengauss`  
+**Cargo**：内部 crate（`publish = false`）  
+**描述**：基于 tokio 构建的异步 openGauss/PostgreSQL 客户端。本节为内部贡献者保留；外部用户应改用 `gaussdb`。
+
+#### 关键类型
+
+| 类型 | 描述 |
+|------|-------------|
+| `Client` | 主异步客户端：查询、执行、预编译、COPY、事务 |
 | `Connection` | 后台连接任务（使用 `tokio::spawn` 启动） |
 | `Config` | 连接配置构建器 |
 | `Statement` | 预编译语句 |
@@ -175,14 +272,14 @@ let (client, connection) = config.connect(tls).await?;
 ### opengauss（同步客户端）
 
 **Crate**：`crates/opengauss`  
-**Cargo**：`opengauss = "0.19.13"`  
-**描述**：`tokio-opengauss` 的同步封装。当您不需要异步 I/O 时使用。
+**Cargo**：内部 crate（`publish = false`）  
+**描述**：`tokio-opengauss` 的同步封装。公共同步 API 通过 `gaussdb::sync` 暴露（需要 `sync` 特性）。本节为内部贡献者保留；外部用户应使用 `gaussdb` 并启用 `features = ["sync"]`。
 
 #### 关键类型
 
 | 类型 | 描述 |
 |------|-------------|
-| `Client` | 同步客户端 — 查询、执行、预编译、事务 |
+| `Client` | 同步客户端：查询、执行、预编译、事务 |
 | `Config` | 连接配置 |
 | `Transaction` | 事务句柄 |
 | `BinaryCopyInWriter` | COPY FROM 写入器 |
@@ -191,7 +288,7 @@ let (client, connection) = config.connect(tls).await?;
 #### 基本用法
 
 ```rust
-use opengauss::{Client, NoTls};
+use gaussdb::sync::{Client, NoTls};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = Client::connect(
@@ -210,7 +307,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-同步客户端内部启动了一个 tokio 运行时。对于性能敏感的应用，建议直接使用 `tokio-opengauss`。
+同步客户端内部启动了一个 tokio 运行时。对于性能敏感的应用，建议直接使用异步 API。
 
 ---
 
@@ -300,7 +397,7 @@ use tokio_util::codec::Framed;
 ### opengauss-types
 
 **Crate**：`crates/opengauss-types`  
-**描述**：类型系统 — `ToSql` 和 `FromSql` trait、OID 映射、类型转换。
+**描述**：类型系统：`ToSql` 和 `FromSql` trait、OID 映射、类型转换。
 
 #### 关键 Trait
 
@@ -334,7 +431,7 @@ pub trait FromSql<'a>: Sized {
 
 #### 可选类型支持（功能特性标志）
 
-在 `tokio-opengauss` 上启用功能标志：
+在 `gaussdb` 上启用功能标志：
 
 | 功能标志 | 类型支持 |
 |---------|-------------|
@@ -354,7 +451,7 @@ pub trait FromSql<'a>: Sized {
 **描述**：`#[derive(ToSql, FromSql)]` 的过程宏。
 
 ```rust
-use opengauss_types::{ToSql, FromSql};
+use gaussdb::types::{ToSql, FromSql};
 
 #[derive(Debug, ToSql, FromSql)]
 #[opengauss(name = "my_type")]  // 映射到自定义 PostgreSQL 类型
@@ -368,20 +465,20 @@ struct MyType {
 
 ### opengauss-native-tls / opengauss-openssl
 
-**描述**：`tokio-opengauss` 的 TLS 连接器实现。
+**描述**：`tokio-opengauss` 内部使用的 TLS 连接器实现。外部用户通过 `gaussdb` 门面使用这些连接器。
 
-- `opengauss-native-tls` 使用 `native-tls` crate（平台原生 TLS：Windows 上的 SChannel、macOS 上的 Secure Transport、Linux 上的 OpenSSL）
-- `opengauss-openssl` 直接使用 `openssl` crate
+- `gaussdb::native_tls::MakeTlsConnector`（特性 `tls-native-tls`）使用 `native-tls` crate（平台原生 TLS：Windows 上的 SChannel、macOS 上的 Secure Transport、Linux 上的 OpenSSL）
+- `gaussdb::openssl::MakeTlsConnector`（特性 `tls-openssl`）直接使用 `openssl` crate
 
-两者均实现了 `tokio-opengauss::connect()` 所需的 `TlsConnect` trait。
+两者均实现了 `gaussdb::connect()` 所需的 `TlsConnect` trait。
 
 ```rust
-use opengauss_native_tls::MakeTlsConnector;
+use gaussdb::native_tls::MakeTlsConnector;
 use native_tls::TlsConnector;
 
 let connector = TlsConnector::new()?;  // 或使用 builder 配置自定义选项
 let tls = MakeTlsConnector::new(connector);
-let (client, connection) = tokio_opengauss::connect("host=... sslmode=require", tls).await?;
+let (client, connection) = gaussdb::connect("host=... sslmode=require", tls).await?;
 ```
 
 ---
@@ -474,17 +571,20 @@ Sync
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-tokio-opengauss = "0.7.17"
-# 可选：TLS
-opengauss-native-tls = "0.5.3"
-native-tls = "0.2"
+gaussdb = "0.1.0"
+# 可选 TLS
+#gaussdb = { version = "0.1.0", features = ["tls-native-tls"] }
+# 可选类型扩展：
+#   with-chrono-0_4, with-uuid-1, with-serde_json-1, with-rust_decimal-1 等
 ```
 
 **同步：**
 
 ```toml
 [dependencies]
-opengauss = "0.19.13"
+gaussdb = { version = "0.1.0", features = ["sync"] }
+# 同时启用 TLS 和类型扩展：
+#gaussdb = { version = "0.1.0", features = ["tls-native-tls", "sync", "with-chrono-0_4"] }
 ```
 
 ### 连接 URL
@@ -499,7 +599,7 @@ host=db.example.com user=admin password=secret dbname=production sslmode=require
 或使用 `Config` 构建器：
 
 ```rust
-let config = tokio_opengauss::Config::new()
+let config = gaussdb::Config::new()
     .host("localhost")
     .port(5432)
     .user("postgres")
@@ -519,13 +619,13 @@ deadpool-postgres = "0.14"  # 或 bb8-postgres、mobc-postgres
 
 ```rust
 use deadpool_postgres::{Config, Pool};
-// deadpool-postgres 可通过 Manager trait 与 tokio-opengauss 配合使用
+// deadpool-postgres 可通过 Manager trait 与 gaussdb 配合使用
 ```
 
 ### 错误处理
 
 ```rust
-use tokio_opengauss::error::SqlState;
+use gaussdb::error::SqlState;
 
 match client.query("SELECT * FROM nonexistent", &[]).await {
     Err(e) => {
@@ -659,7 +759,28 @@ pub enum AuthenticationMessage {
 
 ## 功能特性标志
 
+### gaussdb
+
+`gaussdb` 将功能标志转发给 `tokio-opengauss`，后者再转发给 `opengauss-types`：
+
+| 功能标志 | 默认 | 描述 |
+|---------|---------|-------------|
+| `sync` | 否 | 启用 `gaussdb::sync` 同步 API |
+| `tls-native-tls` | 否 | 启用 `gaussdb::native_tls::MakeTlsConnector` |
+| `tls-openssl` | 否 | 启用 `gaussdb::openssl::MakeTlsConnector` |
+| `derive` | 否 | 通过 `opengauss-derive` 启用 `#[derive(ToSql, FromSql)]` |
+| `runtime` | 是 | 转发至 `tokio-opengauss` |
+| `with-chrono-0_4` | 否 | 转发至 `tokio-opengauss` / `opengauss-types` |
+| `with-uuid-1` | 否 | 转发至 `tokio-opengauss` / `opengauss-types` |
+| `with-serde_json-1` | 否 | 转发至 `tokio-opengauss` / `opengauss-types` |
+| `with-time-0_3` | 否 | 转发至 `tokio-opengauss` / `opengauss-types` |
+| `with-geo-types-0_7` | 否 | 转发至 `tokio-opengauss` / `opengauss-types` |
+| `with-eui48-1` | 否 | 转发至 `tokio-opengauss` / `opengauss-types` |
+| `with-smol_str-01` | 否 | 转发至 `tokio-opengauss` / `opengauss-types` |
+
 ### tokio-opengauss
+
+内部 crate（`publish = false`）。以下功能标志为贡献者列出；最终用户应通过 `gaussdb` 启用它们。
 
 | 功能标志 | 默认 | 描述 |
 |---------|---------|-------------|
@@ -675,11 +796,11 @@ pub enum AuthenticationMessage {
 
 ### opengauss（同步）
 
-所有功能标志转发至 `tokio-opengauss`：
+内部 crate（`publish = false`）。公共同步 API 通过 `gaussdb::sync` 配合 `features = ["sync"]` 暴露：
 
 ```toml
 [dependencies]
-opengauss = { version = "0.19.13", features = ["with-chrono-0_4", "with-uuid-1"] }
+gaussdb = { version = "0.1.0", features = ["sync", "with-chrono-0_4", "with-uuid-1"] }
 ```
 
 ---
@@ -696,7 +817,7 @@ opengauss = { version = "0.19.13", features = ["with-chrono-0_4", "with-uuid-1"]
 
 - MCP 服务器将 `execute_query` 限制为仅 `SELECT` 和 `EXPLAIN`（只读）。
 - CLI 模式允许所有语句，但需要用户显式调用。
-- 始终使用参数化查询（`$1`、`$2`）——绝不使用字符串拼接。
+- 始终使用参数化查询（`$1`、`$2`）；绝不使用字符串拼接。
 
 ### TLS
 
