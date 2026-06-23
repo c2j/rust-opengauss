@@ -207,28 +207,25 @@ dbname = "postgres"
 ```toml
 default_connection = "dev"
 
-[[connections]]
-name = "dev"
+[connections.dev]
 host = "127.0.0.1"
 port = 5432
 user = "gaussdb"
 password = "secret"
 dbname = "devdb"
 
-[[connections]]
-name = "prod"
+[connections.prod]
 host = "192.168.1.10"
 port = 5432
 user = "admin"
 password = "keyring"         # stored in OS keychain
 dbname = "production"
 
-[[connections]]
-name = "staging"
+[connections.staging]
 url = "host=10.0.0.5 user=admin password=keyring dbname=staging sslmode=require"
 ```
 
-When `[[connections]]` is present, flat fields (`host`, `user`, etc.) are ignored. When absent, they wrap into a single `"default"` connection — fully backward compatible.
+When `[connections.<name>]` tables are present, flat fields (`host`, `user`, etc.) are ignored. When absent, they wrap into a single `"default"` connection — fully backward compatible.
 
 `default_connection` specifies the fallback when tools don't provide a `connection_name`. Defaults to the first connection.
 
@@ -440,8 +437,7 @@ Add to `.cursor/mcp.json`:
 Per-connection timeout settings in the config file:
 
 ```toml
-[[connections]]
-name = "prod"
+[connections.prod]
 host = "192.168.1.10"
 user = "admin"
 password = "keyring"
