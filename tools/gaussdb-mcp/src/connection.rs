@@ -14,7 +14,7 @@ pub(crate) async fn do_connect(
     url: &str,
     timeout_config: Option<&crate::config::TimeoutConfig>,
 ) -> Result<
-    (Arc<tokio_opengauss::Client>, tokio::task::JoinHandle<()>),
+    (Arc<gaussdb::Client>, tokio::task::JoinHandle<()>),
     Box<dyn std::error::Error + Send + Sync>,
 > {
     let (client, handle) = if needs_tls(url) {
@@ -22,8 +22,8 @@ pub(crate) async fn do_connect(
             .danger_accept_invalid_certs(true)
             .danger_accept_invalid_hostnames(true)
             .build()?;
-        let tls = opengauss_native_tls::MakeTlsConnector::new(connector);
-        let (client, connection) = tokio_opengauss::connect(url, tls).await?;
+        let tls = gaussdb::native_tls::MakeTlsConnector::new(connector);
+        let (client, connection) = gaussdb::connect(url, tls).await?;
         let client = Arc::new(client);
 
         let handle = tokio::spawn(async move {
@@ -50,7 +50,7 @@ pub(crate) async fn do_connect(
 
         (client, handle)
     } else {
-        let (client, connection) = tokio_opengauss::connect(url, tokio_opengauss::NoTls).await?;
+        let (client, connection) = gaussdb::connect(url, gaussdb::NoTls).await?;
         let client = Arc::new(client);
 
         let handle = tokio::spawn(async move {

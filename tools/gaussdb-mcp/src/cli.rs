@@ -12,10 +12,10 @@ use crate::connection::do_connect;
 use crate::output::{format_field_string, format_row_value, format_table};
 use crate::server::{format_error_chain, sqlstate_to_sqlcode};
 use futures_util::StreamExt;
+use gaussdb::types::ToSql;
 use serde_json::Value;
-use tokio_opengauss::types::ToSql;
 
-fn format_sql_error(err: &tokio_opengauss::Error) -> String {
+fn format_sql_error(err: &gaussdb::Error) -> String {
     if let Some(db_err) = err.as_db_error() {
         let sqlstate = db_err.code().code();
         let sqlcode = sqlstate_to_sqlcode(sqlstate);
@@ -143,7 +143,7 @@ fn strip_leading_comments(sql: &str) -> &str {
 
 #[allow(dead_code)]
 pub(crate) async fn execute_sql_buffered(
-    client: &tokio_opengauss::Client,
+    client: &gaussdb::Client,
     sql: &str,
 ) -> Result<QueryResult, String> {
     let trimmed = sql.trim();
@@ -406,7 +406,7 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
                 );
                 let mut count = 0usize;
                 let mut columns: Option<Vec<String>> = None;
-                let mut cached_types: Vec<tokio_opengauss::types::Type> = Vec::new();
+                let mut cached_types: Vec<gaussdb::types::Type> = Vec::new();
 
                 while let Some(row_result) = stream.next().await {
                     let row = row_result

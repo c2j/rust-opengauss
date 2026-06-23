@@ -302,11 +302,8 @@ fn parse_host_port_from_url(url: &str) -> Option<(String, u16)> {
     }
 }
 
-async fn query_verbose_details(
-    client: &tokio_opengauss::Client,
-    elapsed: Duration,
-) -> VerboseDetails {
-    async fn query_scalar(client: &tokio_opengauss::Client, sql: &str) -> Option<String> {
+async fn query_verbose_details(client: &gaussdb::Client, elapsed: Duration) -> VerboseDetails {
+    async fn query_scalar(client: &gaussdb::Client, sql: &str) -> Option<String> {
         match client.query_one(sql, &[]).await {
             Ok(row) => row
                 .try_get::<_, Option<&str>>(0)
@@ -584,9 +581,9 @@ fn extract_tls_cert_info(host: &str, port: u16, verify: bool) -> Result<TlsCertI
 async fn try_connect_notls(
     url: &str,
     verbose: bool,
-) -> Result<(String, Option<VerboseDetails>), tokio_opengauss::Error> {
+) -> Result<(String, Option<VerboseDetails>), gaussdb::Error> {
     let start = Instant::now();
-    let (client, connection) = tokio_opengauss::connect(url, tokio_opengauss::NoTls).await?;
+    let (client, connection) = gaussdb::connect(url, gaussdb::NoTls).await?;
     let elapsed = start.elapsed();
     tokio::spawn(async move {
         let _ = connection.await;
@@ -619,8 +616,8 @@ async fn try_connect_tls(
         builder.danger_accept_invalid_hostnames(true);
     }
     let connector = builder.build()?;
-    let tls = opengauss_native_tls::MakeTlsConnector::new(connector);
-    let (client, connection) = tokio_opengauss::connect(url, tls).await?;
+    let tls = gaussdb::native_tls::MakeTlsConnector::new(connector);
+    let (client, connection) = gaussdb::connect(url, tls).await?;
     let elapsed = start.elapsed();
     tokio::spawn(async move {
         let _ = connection.await;

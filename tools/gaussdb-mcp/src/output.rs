@@ -1,10 +1,10 @@
+use gaussdb::Row;
+use gaussdb::types::{FromSql, Type};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde_json::{Value, json};
 use std::error::Error;
 use std::net::IpAddr;
-use tokio_opengauss::Row;
-use tokio_opengauss::types::{FromSql, Type};
 
 /// Generic byte-extractor that accepts ANY Postgres type so the dispatch
 /// fallback can read raw bytes for types without an explicit handler.
@@ -818,13 +818,13 @@ mod tests {
 #[cfg(all(test, feature = "integration"))]
 mod integration_tests {
     use super::*;
-    use tokio_opengauss::{Client, Row, tls::NoTls};
+    use gaussdb::{Client, Row, tls::NoTls};
 
     async fn connect() -> Client {
         let url = std::env::var("GAUSSDB_TEST_URL").unwrap_or_else(|_| {
             "host=127.0.0.1 port=5432 user=gaussdb password=Gaussdb@123 dbname=postgres".to_string()
         });
-        let (client, connection) = tokio_opengauss::connect(&url, NoTls)
+        let (client, connection) = gaussdb::connect(&url, NoTls)
             .await
             .expect("DB connect failed; set GAUSSDB_TEST_URL or run docker");
         tokio::spawn(async move {

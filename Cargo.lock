@@ -1261,6 +1261,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gaussdb"
+version = "0.1.0"
+dependencies = [
+ "fallible-iterator",
+ "opengauss",
+ "opengauss-native-tls",
+ "opengauss-openssl",
+ "opengauss-protocol",
+ "tokio",
+ "tokio-opengauss",
+]
+
+[[package]]
 name = "gaussdb-mcp"
 version = "0.4.7"
 dependencies = [
@@ -1269,9 +1282,9 @@ dependencies = [
  "csv",
  "dirs",
  "futures-util",
+ "gaussdb",
  "keyring",
  "native-tls",
- "opengauss-native-tls",
  "openssl",
  "rmcp",
  "rpassword",
@@ -1282,7 +1295,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "tokio-opengauss",
  "toml 0.8.23",
  "tracing",
  "tracing-appender",
