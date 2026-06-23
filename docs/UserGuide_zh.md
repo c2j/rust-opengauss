@@ -73,16 +73,14 @@ dbname = "mydb"
 ```toml
 default_connection = "development"
 
-[[connections]]
-name = "development"
+[connections.development]
 host = "127.0.0.1"
 port = 5432
 user = "dev"
 password = "devpass"
 dbname = "devdb"
 
-[[connections]]
-name = "production"
+[connections.production]
 host = "db-prod.example.com"
 port = 5432
 user = "admin"
@@ -465,8 +463,7 @@ password = "my-plaintext-password"
 
 ```toml
 # 在配置文件中
-[[connections]]
-name = "secure-db"
+[connections.secure-db]
 host = "db.example.com"
 user = "admin"
 password = "keyring"
@@ -580,7 +577,7 @@ openGauss 和 PostgreSQL 9.5+。该工具使用标准的 PostgreSQL 线协议（
 
 ### 可以配置多少个连接？
 
-没有硬性限制。配置文件中的每个 `[[connections]]` 条目创建一个连接。
+没有硬性限制。配置文件中的每个 `[connections.<name>]` 表创建一个连接。
 
 ### 我的密码安全吗？
 

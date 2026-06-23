@@ -73,16 +73,14 @@ dbname = "mydb"
 ```toml
 default_connection = "development"
 
-[[connections]]
-name = "development"
+[connections.development]
 host = "127.0.0.1"
 port = 5432
 user = "dev"
 password = "devpass"
 dbname = "devdb"
 
-[[connections]]
-name = "production"
+[connections.production]
 host = "db-prod.example.com"
 port = 5432
 user = "admin"
@@ -465,8 +463,7 @@ This is transparent — no manual steps needed.
 
 ```toml
 # In config file
-[[connections]]
-name = "secure-db"
+[connections.secure-db]
 host = "db.example.com"
 user = "admin"
 password = "keyring"
@@ -580,7 +577,7 @@ Yes! Use CLI mode (`gaussdb-mcp cli`) for direct SQL execution from terminal or 
 
 ### How many connections can I configure?
 
-No hard limit. Each `[[connections]]` entry in the config file creates one connection.
+No hard limit. Each `[connections.<name>]` table in the config file creates one connection.
 
 ### Is my password secure?
 
