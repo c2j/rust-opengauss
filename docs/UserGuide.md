@@ -407,11 +407,14 @@ Adds detailed server information:
 ### Storing Passwords
 
 ```sh
-# Store password for first connection in config
-gaussdb-mcp --store-password 'MySecretP@ss' --config ~/.gaussdb-mcp.toml
+# Store password for first connection in config (interactive prompt)
+gaussdb-mcp store-password --config ~/.gaussdb-mcp.toml
 
 # Store password for a named connection
-gaussdb-mcp --store-password 'ProdP@ss123' --name production --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password --name production --config ~/.gaussdb-mcp.toml
+
+# Non-interactive (read from stdin pipe, e.g. CI/scripts):
+#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name production --config ~/.gaussdb-mcp.toml
 ```
 
 ### How It Works
@@ -536,8 +539,8 @@ psql -h localhost -U postgres -d postgres -c "SELECT 1"
 
 **Solution:**
 ```sh
-# Store the password
-gaussdb-mcp --store-password 'YourPassword' --config ~/.gaussdb-mcp.toml
+# Store the password (interactive prompt)
+gaussdb-mcp store-password --config ~/.gaussdb-mcp.toml
 
 # Or temporarily use plaintext (will auto-migrate)
 # Edit config: change password = "keyring" to password = "YourPassword"

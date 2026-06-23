@@ -407,11 +407,14 @@ gaussdb-mcp --check-connection production --config ~/prod-config.toml
 ### 存储密码
 
 ```sh
-# 为配置文件中的第一个连接存储密码
-gaussdb-mcp --store-password 'MySecretP@ss' --config ~/.gaussdb-mcp.toml
+# 为配置文件中的第一个连接存储密码（交互式提示输入）
+gaussdb-mcp store-password --config ~/.gaussdb-mcp.toml
 
 # 为命名连接存储密码
-gaussdb-mcp --store-password 'ProdP@ss123' --name production --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password --name production --config ~/.gaussdb-mcp.toml
+
+# 非交互模式（从 stdin 管道读取，适用于 CI/脚本）：
+#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name production --config ~/.gaussdb-mcp.toml
 ```
 
 ### 工作原理
@@ -536,8 +539,8 @@ psql -h localhost -U postgres -d postgres -c "SELECT 1"
 
 **解决方案：**
 ```sh
-# 存储密码
-gaussdb-mcp --store-password 'YourPassword' --config ~/.gaussdb-mcp.toml
+# 存储密码（交互式提示输入）
+gaussdb-mcp store-password --config ~/.gaussdb-mcp.toml
 
 # 或临时使用明文（会自动迁移）
 # 编辑配置文件：将 password = "keyring" 改为 password = "YourPassword"
