@@ -51,6 +51,10 @@ rustup component add rustfmt clippy
 ```
 rust-opengauss/
 ├── crates/
+│   ├── gaussdb/                 # 公共 facade crate（重新导出异步/同步客户端）
+│   │   └── src/
+│   │       └── lib.rs          # 根目录暴露异步 API；同步 API 通过 `sync` feature 启用
+│   │
 │   ├── opengauss/              # 同步客户端库
 │   │   └── src/
 │   │       ├── client.rs       # 同步客户端 API
@@ -139,24 +143,30 @@ rust-opengauss/
 └── rustfmt.toml                # 格式化配置
 ```
 
+`gaussdb` 是唯一的公共 library crate。`crates/` 下的其他所有 crate 均为 `publish = false` 的内部工作区成员。
+
 ### Crate 依赖关系图
 
 ```
-gaussdb-mcp (工具)
-  └─ tokio-opengauss (异步客户端)
-  │   ├── opengauss-protocol (线协议)
-  │   ├── opengauss-types (类型系统)
-  │   └── opengauss-native-tls / opengauss-openssl (TLS)
-  └─ opengauss-native-tls
-       └─ native-tls
+外部使用者
+  └─ gaussdb（公共 facade）
+      ├─ tokio-opengauss（异步客户端，publish = false 内部 crate）
+      │   └─ opengauss-types（类型系统，publish = false 内部 crate）
+      │       └─ opengauss-protocol（线协议，publish = false 内部 crate）
+      ├─ opengauss（同步客户端，publish = false 内部 crate）
+      │   └─ tokio-opengauss（通过内部封装共享）
+      ├─ opengauss-native-tls（native-tls 连接器，publish = false 内部 crate）
+      │   └─ native-tls
+      └─ opengauss-openssl（openssl 连接器，publish = false 内部 crate）
+          └─ openssl
 
-opengauss (同步客户端)
-  └─ tokio-opengauss (通过内部封装共享)
+gaussdb-mcp（工具）
+  └─ gaussdb（公共 facade）
 
-opengauss-derive (过程宏)
+opengauss-derive（过程宏，publish = false 内部 crate）
   └─ 独立，重新导出 ToSql/FromSql 派生宏
 
-codegen (开发工具)
+codegen（开发工具）
   └─ 独立，生成类型映射代码
 ```
 
@@ -234,7 +244,7 @@ edition = "2024"
 ### 关键约定
 
 1. **错误处理**：使用结构化错误类型。MCP 工具将 SQLSTATE 映射到 SQLCODE 以提供丰富的错误上下文。
-2. **异步**：MCP 工具和 tokio-opengauss 是异步的（tokio）。同步 `opengauss` crate 封装异步客户端。
+2. **异步**：MCP 工具和 `tokio-opengauss` 是异步的（tokio）；MCP 工具通过 `gaussdb` facade 访问 `tokio-opengauss`。同步 `opengauss` crate 封装异步客户端。
 3. **配置**：使用 serde + TOML 进行配置。敏感值（密码）通过操作系统密钥链处理。
 4. **日志**：使用 `tracing` crate。日志写入文件而非 stderr，避免干扰 MCP stdio 传输。
 5. **无 `unsafe`** 代码，除非有充分理由并经过彻底审查。
@@ -244,12 +254,12 @@ edition = "2024"
 - `server.rs` 中的工具实现使用 `rmcp` 的 `#[tool]` 宏
 - 所有工具通过 `CallToolResult::success()` 返回结构化 JSON
 - 错误返回 `McpError::internal_error()` 并附带详细的 JSON `data` 负载
-- SQL 查询通过 `tokio_opengauss::Client::query(sql, &[])` 参数化
+- 外部使用者通过 `gaussdb::Client::query(sql, &[])` 参数化 SQL 查询；内部 crate 仍使用 `tokio_opengauss::Client::query(sql, &[])`
 - 连接状态管理使用 `Arc<Mutex<HashMap<String, ConnectionState>>>`
 
 ### 库约定
 
-- 公共 API 遵循原始 `tokio-postgres` crate 的 tokio-opengauss/opengauss 约定
+- 公共 API 通过 `gaussdb` 暴露，它重新导出原始 `tokio-postgres` crate 的 tokio-opengauss/opengauss 约定
 - 类型系统使用 `ToSql` 和 `FromSql` trait
 - 功能标志控制可选的类型支持（chrono、uuid、serde_json 等）
 
@@ -357,12 +367,13 @@ docker compose down
 1. 更新 `tools/gaussdb-mcp/Cargo.toml` 中的版本号
 2. 更新更新日志（如果存在）
 3. 创建版本升级提交：`chore(gaussdb-mcp): bump to x.y.z`
-4. 打标签：`git tag vx.y.z`
+4. 打标签：`git tag gaussdb-mcp-vx.y.z`
 5. 推送标签：`git push --tags`
 
 Crate 版本遵循语义化版本：
 - `opengauss` / `tokio-opengauss`：遵循上游（tokio-postgres）版本
-- `gaussdb-mcp`：独立的语义化版本
+- `gaussdb`：0.x.y 独立语义化版本，与 tokio-opengauss 耦合（tokio-opengauss 发生破坏性变更时，gaussdb 也进行破坏性版本升级）
+- `gaussdb-mcp`：独立的语义化版本（当前为 0.5.0）；标签使用 `gaussdb-mcp-v<version>`
 
 ---
 

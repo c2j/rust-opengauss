@@ -51,6 +51,10 @@ rustup component add rustfmt clippy
 ```
 rust-opengauss/
 ├── crates/
+│   ├── gaussdb/                 # Public facade crate (re-exports async/sync clients)
+│   │   └── src/
+│   │       └── lib.rs          # Async API at root; sync API behind `sync` feature
+│   │
 │   ├── opengauss/              # Synchronous client library
 │   │   └── src/
 │   │       ├── client.rs       # Sync client API
@@ -139,21 +143,27 @@ rust-opengauss/
 └── rustfmt.toml                # Formatting configuration
 ```
 
+`gaussdb` is the only public library crate. All other crates under `crates/` are `publish = false` internal workspace members.
+
 ### Crate Dependency Graph
 
 ```
+external consumers
+  └─ gaussdb (public facade)
+      ├─ tokio-opengauss (async client, publish = false internal)
+      │   └─ opengauss-types (type system, publish = false internal)
+      │       └─ opengauss-protocol (wire protocol, publish = false internal)
+      ├─ opengauss (sync client, publish = false internal)
+      │   └─ tokio-opengauss (shared via internal wrapper)
+      ├─ opengauss-native-tls (native-tls connector, publish = false internal)
+      │   └─ native-tls
+      └─ opengauss-openssl (openssl connector, publish = false internal)
+          └─ openssl
+
 gaussdb-mcp (tool)
-  └─ tokio-opengauss (async client)
-  │   ├── opengauss-protocol (wire protocol)
-  │   ├── opengauss-types (type system)
-  │   └── opengauss-native-tls / opengauss-openssl (TLS)
-  └─ opengauss-native-tls
-       └─ native-tls
+  └─ gaussdb (public facade)
 
-opengauss (sync client)
-  └─ tokio-opengauss (shares via internal wrapper)
-
-opengauss-derive (proc macros)
+opengauss-derive (proc macros, publish = false internal)
   └─ standalone, re-exports ToSql/FromSql derives
 
 codegen (dev tool)
@@ -234,7 +244,7 @@ edition = "2024"
 ### Key Conventions
 
 1. **Error handling**: Use structured error types. The MCP tool maps SQLSTATEs to SQLCODEs for rich error context.
-2. **Async**: The MCP tool and tokio-opengauss are async (tokio). The sync `opengauss` crate wraps the async client.
+2. **Async**: The MCP tool and `tokio-opengauss` are async (tokio); the MCP tool reaches `tokio-opengauss` through the `gaussdb` facade. The sync `opengauss` crate wraps the async client.
 3. **Configuration**: Use serde + TOML for config. Sensitive values (passwords) go through the OS keychain.
 4. **Logging**: Use `tracing` crate. Logs go to files, not stderr, to avoid MCP stdio interference.
 5. **No `unsafe`** without strong justification and thorough review.
@@ -244,12 +254,12 @@ edition = "2024"
 - Tool implementations in `server.rs` use the `#[tool]` macro from `rmcp`
 - All tools return structured JSON via `CallToolResult::success()`
 - Errors return `McpError::internal_error()` with detailed JSON `data` payloads
-- SQL queries are parameterized via `tokio_opengauss::Client::query(sql, &[])`
+- SQL queries are parameterized via `gaussdb::Client::query(sql, &[])` for external consumers; internal crates still use `tokio_opengauss::Client::query(sql, &[])`
 - Connection state management uses `Arc<Mutex<HashMap<String, ConnectionState>>>`
 
 ### Library Conventions
 
-- Public API follows the tokio-opengauss/opengauss convention from the original `tokio-postgres` crate
+- Public API is exposed through `gaussdb`, which re-exports the tokio-opengauss/opengauss convention from the original `tokio-postgres` crate
 - Type system uses `ToSql` and `FromSql` traits
 - Feature flags control optional type support (chrono, uuid, serde_json, etc.)
 
@@ -357,12 +367,13 @@ Releases are managed by the maintainer. The process:
 1. Update version in `tools/gaussdb-mcp/Cargo.toml`
 2. Update changelog (if exists)
 3. Create a version bump commit: `chore(gaussdb-mcp): bump to x.y.z`
-4. Tag: `git tag vx.y.z`
+4. Tag: `git tag gaussdb-mcp-vx.y.z`
 5. Push tags: `git push --tags`
 
 Crate versions follow semver:
 - `opengauss` / `tokio-opengauss`: follow upstream (tokio-postgres) versioning
-- `gaussdb-mcp`: independent semver
+- `gaussdb`: 0.x.y independent semver, coupled to tokio-opengauss (breaking changes in tokio-opengauss ⇒ breaking bump in gaussdb)
+- `gaussdb-mcp`: independent semver (currently 0.5.0); tags use `gaussdb-mcp-v<version>`
 
 ---
 
