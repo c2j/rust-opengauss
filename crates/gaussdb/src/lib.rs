@@ -12,6 +12,19 @@
 //! (`Client`/`Row`/`Error`/`Config`/`NoTls` 等),导致你拿到同步类型却在写 async 代码。
 //! 请显式 import 或只用其一。
 //!
+//! # 命名空间布局
+//!
+//! | 路径 | 内容 |
+//! |---|---|
+//! | crate 根(`gaussdb::*`) | 异步便捷别名(`Client`/`Row`/`Config`/`NoTls`/…) |
+//! | `gaussdb::sync::*` | 同步便捷别名(opt-in `sync` feature) |
+//! | `gaussdb::driver::*` | 异步低层完整表面(tokio-opengauss 全量,含 `config` 模块) |
+//! | `gaussdb::sync::driver::*` | 同步低层完整表面(opengauss 全量,含 `config` 模块) |
+//! | `gaussdb::native_tls` / `gaussdb::openssl` | TLS 连接器(feature-gated) |
+//!
+//! **`gaussdb::config`** 留作高层配置解析模块(待 `config` feature 引入)。
+//! 若需低层 driver Config builder 模块,请走 `gaussdb::driver::config`。
+//!
 //! # SemVer 耦合
 //!
 //! `gaussdb` 0.x.y 重新导出 `tokio-opengauss`。tokio-opengauss 或 opengauss-types
@@ -19,14 +32,21 @@
 
 pub use fallible_iterator;
 
-// === 异步表面(主,crate 根)===
+// === 低层 driver 命名空间(异步,完整表面)===
+/// tokio-opengauss 全量 re-export。需要低层 `config` 模块(SslMode 等)时走此路径。
+pub mod driver {
+    pub use tokio_opengauss::*;
+}
+
+// === 异步表面(主,crate 根便捷别名)===
+// 注意:故意不 re-export `config` 模块——该命名空间留给高层 gaussdb::config。
 #[cfg(feature = "runtime")]
-pub use tokio_opengauss::connect;
-pub use tokio_opengauss::{
+pub use driver::connect;
+pub use driver::{
     AsyncMessage, CancelToken, Client, Column, Config, Connection, CopyInSink, CopyOutStream,
     Error, GenericClient, IsolationLevel, NoTls, Notification, Portal, Row, RowStream,
     SimpleColumn, SimpleQueryMessage, SimpleQueryRow, SimpleQueryStream, Socket, Statement,
-    ToStatement, Transaction, TransactionBuilder, binary_copy, config, error, row, tls, types,
+    ToStatement, Transaction, TransactionBuilder, binary_copy, error, row, tls, types,
 };
 
 // === 同步表面(opt-in)===
@@ -35,10 +55,16 @@ pub mod sync {
     //! 同步客户端。这些类型与 crate 根的异步类型**同名但不同类型**。
     //! 不要 `use gaussdb::sync::*` 同时又 `use gaussdb::*`。
 
-    pub use opengauss::{
-        CancelToken, Client, Config, CopyInWriter, CopyOutReader, Error, GenericClient, NoTls,
+    /// opengauss(同步)全量 re-export。需要低层 `config` 模块时走 `sync::driver::config`。
+    pub mod driver {
+        pub use opengauss::*;
+    }
+
+    // 便捷别名:故意不 re-export `config` 模块——与根策略一致。
+    pub use driver::{
+        CancelToken, Client, Config, CopyInWorker, CopyOutReader, Error, GenericClient, NoTls,
         Notifications, Row, RowIter, SimpleQueryRow, Transaction, TransactionBuilder, binary_copy,
-        config, notifications,
+        notifications,
     };
 
     /// 同步连接便捷函数(与根 `gaussdb::connect` 对称)。
