@@ -15,7 +15,7 @@ all-features = true
 
 [features]
 default = ["runtime"]
-runtime = ["tokio-opengauss/runtime"]
+runtime = ["tokio-opengauss/runtime", "dep:tokio"]
 
 # 同步门面(opt-in)。启用后激活 opengauss 同步封装层;opengauss 自带
 # tokio = { features = ["rt", "time"] } 依赖(用于内部创建 Runtime 阻塞调用 async Client),
@@ -23,8 +23,11 @@ runtime = ["tokio-opengauss/runtime"]
 sync = ["dep:opengauss"]
 
 # TLS 连接器(命名空间隔离避免 native-tls/openssl 撞名)
-tls-native-tls = ["dep:opengauss-native-tls"]
+tls-native-tls = ["dep:opengauss-native-tls", "dep:native-tls"]
 tls-openssl    = ["dep:opengauss-openssl"]
+
+# 高层配置解析模块:TOML 配置、密钥链密码、SslMode/TLS 逻辑
+config = ["dep:toml", "dep:dirs", "dep:keyring", "dep:serde"]
 
 # derive 宏透传(MF1):让用户能用 #[derive(ToSql, FromSql)]
 derive = ["tokio-opengauss/derive"]
@@ -63,6 +66,13 @@ opengauss           = { version = "0.19.13", path = "../opengauss",           op
 opengauss-native-tls = { version = "0.5.3",  path = "../opengauss-native-tls", optional = true }
 opengauss-openssl    = { version = "0.5.3",  path = "../opengauss-openssl",    optional = true }
 opengauss-protocol   = { version = "0.6.11", path = "../opengauss-protocol" }
+native-tls  = { version = "0.2", optional = true }
+tokio       = { version = "1", features = ["rt"], optional = true }
+toml        = { version = "0.8", optional = true }
+dirs        = { version = "6", optional = true }
+keyring     = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"], optional = true }
+serde       = { version = "1", features = ["derive"], optional = true }
+thiserror   = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "net", "time"] }

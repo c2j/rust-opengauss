@@ -32,6 +32,8 @@
 
 pub use fallible_iterator;
 
+pub mod duration_parse;
+
 // === 低层 driver 命名空间(异步,完整表面)===
 /// tokio-opengauss 全量 re-export。需要低层 `config` 模块(SslMode 等)时走此路径。
 pub mod driver {
@@ -62,7 +64,7 @@ pub mod sync {
 
     // 便捷别名:故意不 re-export `config` 模块——与根策略一致。
     pub use driver::{
-        CancelToken, Client, Config, CopyInWorker, CopyOutReader, Error, GenericClient, NoTls,
+        CancelToken, Client, Config, CopyInWriter, CopyOutReader, Error, GenericClient, NoTls,
         Notifications, Row, RowIter, SimpleQueryRow, Transaction, TransactionBuilder, binary_copy,
         notifications,
     };
@@ -87,3 +89,7 @@ pub use opengauss_openssl as openssl;
 
 // === 协议(最小暴露)===
 pub use opengauss_protocol::Oid;
+
+// === 高层配置解析(opt-in, gated by `config` feature)===
+#[cfg(feature = "config")]
+pub mod config;
