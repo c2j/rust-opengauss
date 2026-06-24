@@ -90,6 +90,7 @@ OPTIONS:
         --config <PATH>         Path to config file
         --format <FMT>          Output format: table, json, vertical, csv [default: table]
         --statement-timeout     Override config statement timeout
+        --no-history            Do not read/write persistent per-connection SQL history (interactive mode)
 ```
 
 **Examples:**
@@ -188,6 +189,7 @@ Notes:
 - Statements execute only on `;` outside quotes/comments (`'...'`, `"..."`, `--`, `/* ... */`).
 - SQL errors print to stderr and the REPL continues.
 - History deduplicates consecutive identical statements.
+- SQL history persists per connection name under the app data dir (`$XDG_DATA_HOME/gaussdb-mcp/history/<name>` on Linux, `~/Library/Application Support/gaussdb-mcp/history/<name>` on macOS); ↑/↓ reach prior sessions. Pass `--no-history` to opt out. History is stored in plaintext, so avoid running statements that embed secrets, or use `--no-history`.
 - For very large exports, prefer one-shot `cli --format csv` over the REPL — the REPL buffers results to support `.save`.
 
 ## Configuration

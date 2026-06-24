@@ -94,6 +94,10 @@ enum Commands {
         /// Enter interactive REPL mode
         #[arg(short, long)]
         interactive: bool,
+
+        /// Do not read or write persistent per-connection SQL history
+        #[arg(long)]
+        no_history: bool,
     },
 }
 
@@ -1165,6 +1169,7 @@ async fn main() {
             connection_max_lifetime,
             timeout_action,
             interactive,
+            no_history,
         }) => {
             if check_connection {
                 let config_path = cli.config.map(PathBuf::from);
@@ -1180,6 +1185,7 @@ async fn main() {
                     statement_timeout,
                     connection_max_lifetime,
                     timeout_action,
+                    no_history,
                 };
                 if let Err(e) = interactive::run_interactive(args).await {
                     eprintln!("error: {}", e);
@@ -1196,6 +1202,7 @@ async fn main() {
                     statement_timeout,
                     connection_max_lifetime,
                     timeout_action,
+                    no_history,
                 };
                 if let Err(e) = cli::run_cli(args).await {
                     eprintln!("error: {}", e);

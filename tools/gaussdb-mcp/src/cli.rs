@@ -94,6 +94,7 @@ pub(crate) struct CliArgs {
     pub statement_timeout: Option<String>,
     pub connection_max_lifetime: Option<String>,
     pub timeout_action: Option<String>,
+    pub no_history: bool,
 }
 
 // ---- helpers for interactive mode ----

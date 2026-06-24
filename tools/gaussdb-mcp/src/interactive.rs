@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 
 use rustyline::Editor;
+use rustyline::config::Configurer;
 use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
 use rustyline::history::DefaultHistory;
@@ -386,6 +387,45 @@ fn handle_dot_command(line: &str, ctx: &mut ReplContext) -> DotAction {
 
 const PROMPT: &str = "$ ";
 
+// ─── Persistent per-connection history ─────────────────────────────────────────
+
+/// Max entries retained per connection history file. Oldest entries are dropped
+/// first (rustyline `DefaultHistory` evicts in insertion order once the cap is
+/// reached).
+const HISTORY_MAX_ENTRIES: usize = 1000;
+
+/// Sanitize a connection name into a filesystem-safe history file name.
+///
+/// Replaces any char outside `[A-Za-z0-9._-]` with `_` so that connection names
+/// containing path separators (e.g. `prod/shard1`) cannot escape the history
+/// directory. The empty name, `.`, and `..` collapse to `default`.
+fn sanitize_history_name(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    match s.as_str() {
+        "" | "." | ".." => "default".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Resolve the per-connection history file path under the app's local data dir.
+///
+/// Layout: `$data_local_dir/gaussdb-mcp/history/<sanitized_name>` — mirrors the
+/// existing log-dir convention in `main.rs::init_logging`. Returns `None` only
+/// when the platform cannot provide a local data directory.
+fn history_path_for(connection_name: &str) -> Option<PathBuf> {
+    let dir = dirs::data_local_dir()?.join("gaussdb-mcp").join("history");
+    Some(dir.join(sanitize_history_name(connection_name)))
+}
+
 pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
     let config_path = args.config_path.map(PathBuf::from);
     let raw = read_config(config_path)?;
@@ -454,6 +494,24 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
         .map_err(|e| format!("failed to init editor: {}", e))?;
     rl.set_helper(Some(SqlHelper));
 
+    let _ = rl.set_max_history_size(HISTORY_MAX_ENTRIES);
+
+    let history_path: Option<PathBuf> = if !args.no_history {
+        match history_path_for(&target.name) {
+            Some(p) => {
+                if let Some(parent) = p.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                // Tolerate missing file on first run.
+                let _ = rl.load_history(&p);
+                Some(p)
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+
     println!(
         "gaussdb-mcp interactive — connected to '{}' ({}). \
          Type .help for commands, .exit to quit.",
@@ -475,7 +533,12 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
                 println!();
                 break;
             }
-            Err(e) => return Err(format!("readline error: {}", e)),
+            Err(e) => {
+                if let Some(p) = &history_path {
+                    let _ = rl.save_history(p);
+                }
+                return Err(format!("readline error: {}", e));
+            }
         };
 
         let trimmed = input.trim();
@@ -531,6 +594,9 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
         }
     }
 
+    if let Some(p) = &history_path {
+        let _ = rl.save_history(p);
+    }
     Ok(())
 }
 
@@ -674,5 +740,49 @@ mod tests {
         assert_eq!(r.complete[0], "SELECT $$a$$");
         assert_eq!(r.complete[1], "INSERT INTO t VALUES ($$b; c$$)");
         assert_eq!(r.remainder, "");
+    }
+
+    #[test]
+    fn sanitize_keeps_safe_chars() {
+        assert_eq!(sanitize_history_name("prod"), "prod");
+        assert_eq!(sanitize_history_name("dev-shard1"), "dev-shard1");
+        assert_eq!(sanitize_history_name("db.v2"), "db.v2");
+        assert_eq!(sanitize_history_name("a_b-c.d"), "a_b-c.d");
+    }
+
+    #[test]
+    fn sanitize_replaces_path_separators_and_unsafe() {
+        assert_eq!(sanitize_history_name("prod/shard1"), "prod_shard1");
+        assert_eq!(sanitize_history_name(r"win\path"), "win_path");
+        assert_eq!(sanitize_history_name("a:b*c?d"), "a_b_c_d");
+        assert_eq!(sanitize_history_name("café"), "caf_");
+    }
+
+    #[test]
+    fn sanitize_reserves_dot_and_empty() {
+        assert_eq!(sanitize_history_name(""), "default");
+        assert_eq!(sanitize_history_name("."), "default");
+        assert_eq!(sanitize_history_name(".."), "default");
+    }
+
+    #[test]
+    fn sanitize_blocks_traversal_attempt() {
+        let s = sanitize_history_name("../../etc/passwd");
+        // Traversal requires a path separator; `..` substrings alone are just a filename.
+        assert!(!s.contains('/'));
+        assert!(!s.contains('\\'));
+    }
+
+    #[test]
+    fn history_path_ends_with_sanitized_name_under_history_dir() {
+        let p = history_path_for("prod/shard1").expect("data dir available in test env");
+        assert!(p.ends_with("history/prod_shard1"));
+        assert!(p.to_string_lossy().contains("gaussdb-mcp"));
+    }
+
+    #[test]
+    fn history_path_empty_name_uses_default() {
+        let p = history_path_for("").expect("data dir available in test env");
+        assert!(p.ends_with("history/default"));
     }
 }
