@@ -1,7 +1,6 @@
 mod cli;
 mod config;
 mod connection;
-mod duration_parse;
 mod interactive;
 mod output;
 mod queries;
