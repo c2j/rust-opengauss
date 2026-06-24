@@ -7,7 +7,7 @@ use std::time::Duration;
 /// - With unit suffix: `"500ms"`, `"30s"`, `"5m"`/`"5min"`, `"1h"`/`"1hr"`, `"2d"`
 /// - Case-insensitive, whitespace-trimmed
 /// - Returns `Err` with a descriptive message for invalid input
-pub(crate) fn parse_duration(s: &str) -> Result<Duration, String> {
+pub fn parse_duration(s: &str) -> Result<Duration, String> {
     let s = s.trim();
 
     if s.is_empty() {

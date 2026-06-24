@@ -51,9 +51,9 @@ rustup component add rustfmt clippy
 ```
 rust-opengauss/
 ├── crates/
-│   ├── gaussdb/                 # 公共 facade crate（重新导出异步/同步客户端）
+│   ├── gaussdb/                 # 公共 facade crate（重新导出异步/同步/配置感知客户端）
 │   │   └── src/
-│   │       └── lib.rs          # 根目录暴露异步 API；同步 API 通过 `sync` feature 启用
+│   │       └── lib.rs          # 根目录暴露异步 API；同步 API 通过 `sync` feature 启用；配置感知 API 通过 `config` feature 启用
 │   │
 │   ├── opengauss/              # 同步客户端库
 │   │   └── src/

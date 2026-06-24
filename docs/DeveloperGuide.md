@@ -76,7 +76,7 @@ This guide is for developers who want to use the `gaussdb` public crate, extend 
 
 **Crate**: `crates/gaussdb`  
 **Cargo**: `gaussdb = "0.1.0"`  
-**Description**: The single public entry point for external consumers. `gaussdb` re-exports the async surface from `tokio-opengauss` at the crate root by default, and exposes a synchronous API under `gaussdb::sync` when the `sync` feature is enabled.
+**Description**: The single public entry point for external consumers. `gaussdb` re-exports the async surface from `tokio-opengauss` at the crate root by default, exposes a synchronous API under `gaussdb::sync` when the `sync` feature is enabled, and provides config-aware connections through `gaussdb::config` when the `config` feature is enabled. Low-level driver building blocks are available under `gaussdb::driver`.
 
 > **Note**: All other workspace crates (`opengauss`, `tokio-opengauss`, `opengauss-protocol`, `opengauss-types`, `opengauss-derive`, `opengauss-native-tls`, `opengauss-openssl`) are now `publish = false` internal crates. They remain workspace members for layering, but external projects should depend only on `gaussdb`.
 
@@ -86,7 +86,9 @@ This guide is for developers who want to use the `gaussdb` public crate, extend 
 |------|-------------|
 | `Client` | Async client: query, execute, prepare, copy, transactions |
 | `sync::Client` | Sync client: same API shape, runs on an internal tokio Runtime |
-| `Config` | Connection configuration builder |
+| `Config` | Connection configuration builder (also available as `gaussdb::driver::config`) |
+| `config::connect_async` / `config::connect_sync` | Config-aware connection helpers (requires `config` feature) |
+| `config::resolve` | Resolve config, keyring, and TLS without connecting (requires `config` feature) |
 | `Statement` | Prepared statement |
 | `Row` | Query result row |
 | `NoTls` | Marker type for no-TLS connections |
@@ -156,6 +158,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 The sync client internally spawns a tokio runtime and blocks on async futures. For performance-critical applications, prefer the async API.
+
+#### Config-aware Connection
+
+Enable the `config` feature for high-level, file and keychain based connection resolution:
+
+```toml
+[dependencies]
+gaussdb = { version = "0.1.0", features = ["config", "sync", "tls-native-tls"] }
+```
+
+```rust
+use std::path::Path;
+
+// Synchronous: resolves config, keyring password, and TLS into a connected Client
+let client = gaussdb::config::connect_sync(
+    None,                        // optional dsn override
+    Some(Path::new("./my.toml")), // optional config file path
+    Some("prod"),                // optional connection name
+)?;
+
+// Asynchronous equivalent
+let client = gaussdb::config::connect_async(None, Some(Path::new("./my.toml")), Some("prod")).await?;
+
+// Resolve without connecting
+let resolved = gaussdb::config::resolve(None, Some(Path::new("./my.toml")), Some("prod"))?;
+// resolved.connection_url, resolved.sslmode, resolved.timeout_config, ...
+```
+
+The `config` feature reads TOML config files, OS keychain entries, and DSN overrides, then selects the correct TLS mode based on `sslmode`:
+
+- `Disable` → NoTls
+- `Prefer` / `Require` → TLS, skip certificate verification
+- `VerifyCa` → TLS, verify cert
+- `VerifyFull` → TLS, verify cert + hostname
+
+Low-level configuration building blocks (for example `Config`, `SslMode`, `Host`) are re-exported under `gaussdb::driver::config`.
 
 ---
 
@@ -762,6 +800,7 @@ Client                          Server
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `sync` | No | Enable `gaussdb::sync` synchronous API |
+| `config` | No | Config-aware connect API (`gaussdb::config`); brings `toml`, `dirs`, and `keyring` dependencies |
 | `tls-native-tls` | No | Enable `gaussdb::native_tls::MakeTlsConnector` |
 | `tls-openssl` | No | Enable `gaussdb::openssl::MakeTlsConnector` |
 | `derive` | No | Enable `#[derive(ToSql, FromSql)]` via `opengauss-derive` |

@@ -27,6 +27,7 @@ tokio = { version = "1", features = ["full"] }
 gaussdb = { path = "../../crates/gaussdb", features = [
     "tls-native-tls",
     "with-rust_decimal-1", "with-serde_json-1", "with-uuid-1", "with-chrono-0_4",
+    "config", "sync",
 ] }
 native-tls = "0.2"
 openssl = { version = "0.10", features = ["vendored"] }

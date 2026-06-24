@@ -1264,13 +1264,19 @@ dependencies = [
 name = "gaussdb"
 version = "0.1.0"
 dependencies = [
+ "dirs",
  "fallible-iterator",
+ "keyring",
+ "native-tls",
  "opengauss",
  "opengauss-native-tls",
  "opengauss-openssl",
  "opengauss-protocol",
+ "serde",
+ "thiserror",
  "tokio",
  "tokio-opengauss",
+ "toml 0.8.23",
 ]
 
 [[package]]
