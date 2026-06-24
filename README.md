@@ -541,7 +541,7 @@ RUST_LOG=gaussdb_mcp=debug gaussdb-mcp
 
 This repository is a Rust workspace containing:
 
-- **`crates/gaussdb`** — Unified public entry point for external consumers. `gaussdb::Client` is async by default (re-exports tokio-opengauss), `gaussdb::sync::Client` is available via the `sync` feature, and TLS and types are exposed through `gaussdb::native_tls`, `gaussdb::openssl`, and `gaussdb::types`.
+- **`crates/gaussdb`** — Unified public entry point for external consumers. `gaussdb::Client` is async by default (re-exports tokio-opengauss), `gaussdb::sync::Client` is available via the `sync` feature, and config-aware connections (`gaussdb::config::connect_async` and `gaussdb::config::connect_sync`) are available via the `config` feature. TLS and types are exposed through `gaussdb::native_tls`, `gaussdb::openssl`, and `gaussdb::types`. Low-level driver building blocks live under `gaussdb::driver`.
 - **`tools/gaussdb-mcp`** — The MCP server + CLI tool (this README's primary focus)
 - **`crates/tokio-opengauss`** — Async openGauss/PostgreSQL client (internal building block, `publish = false`)
 - **`crates/opengauss`** — Synchronous openGauss/PostgreSQL client (internal building block, `publish = false`)

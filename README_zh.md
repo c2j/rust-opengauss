@@ -466,7 +466,7 @@ RUST_LOG=gaussdb_mcp=debug gaussdb-mcp
 
 本仓库是一个 Rust 工作区，包含：
 
-- **`crates/gaussdb`** — 面向外部用户的统一公开入口。默认提供异步 `gaussdb::Client`（重新导出 tokio-opengauss），通过 `sync` 特性可使用同步 `gaussdb::sync::Client`，TLS 与类型分别通过 `gaussdb::native_tls`、`gaussdb::openssl` 和 `gaussdb::types` 暴露。
+- **`crates/gaussdb`** — 面向外部用户的统一公开入口。默认提供异步 `gaussdb::Client`（重新导出 tokio-opengauss），通过 `sync` 特性可使用同步 `gaussdb::sync::Client`，通过 `config` 特性可使用配置感知连接（`gaussdb::config::connect_async` 与 `gaussdb::config::connect_sync`）。TLS 与类型分别通过 `gaussdb::native_tls`、`gaussdb::openssl` 和 `gaussdb::types` 暴露，底层驱动构建块位于 `gaussdb::driver` 下。
 - **`tools/gaussdb-mcp`** — MCP 服务器 + CLI 工具（本文档的重点）
 - **`crates/tokio-opengauss`** — 异步 openGauss/PostgreSQL 客户端（内部构建模块，`publish = false`）
 - **`crates/opengauss`** — 同步 openGauss/PostgreSQL 客户端（内部构建模块，`publish = false`）

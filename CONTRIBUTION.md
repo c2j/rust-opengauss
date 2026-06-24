@@ -51,9 +51,9 @@ rustup component add rustfmt clippy
 ```
 rust-opengauss/
 ├── crates/
-│   ├── gaussdb/                 # Public facade crate (re-exports async/sync clients)
+│   ├── gaussdb/                 # Public facade crate (re-exports async/sync/config clients)
 │   │   └── src/
-│   │       └── lib.rs          # Async API at root; sync API behind `sync` feature
+│   │       └── lib.rs          # Async API at root; sync API behind `sync` feature; config API behind `config` feature
 │   │
 │   ├── opengauss/              # Synchronous client library
 │   │   └── src/

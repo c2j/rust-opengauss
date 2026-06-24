@@ -76,7 +76,7 @@
 
 **Crate**：`crates/gaussdb`  
 **Cargo**：`gaussdb = "0.1.0"`  
-**描述**：外部使用者的唯一公共入口点。默认情况下，`gaussdb` 在 crate 根重新导出 `tokio-opengauss` 的异步接口；启用 `sync` 特性后，`gaussdb::sync` 暴露同步 API。
+**描述**：外部使用者的唯一公共入口点。默认情况下，`gaussdb` 在 crate 根重新导出 `tokio-opengauss` 的异步接口；启用 `sync` 特性后，`gaussdb::sync` 暴露同步 API；启用 `config` 特性后，通过 `gaussdb::config` 提供配置感知连接。底层驱动构建块位于 `gaussdb::driver` 下。
 
 > **注意**：其他所有工作区 crate（`opengauss`、`tokio-opengauss`、`opengauss-protocol`、`opengauss-types`、`opengauss-derive`、`opengauss-native-tls`、`opengauss-openssl`）现在均为 `publish = false` 的内部 crate。它们仍作为工作区成员保留以维持内部分层，但外部项目应只依赖 `gaussdb`。
 
@@ -86,7 +86,9 @@
 |------|-------------|
 | `Client` | 异步客户端：查询、执行、预编译、COPY、事务 |
 | `sync::Client` | 同步客户端：相同 API 形态，在内部 tokio Runtime 上运行 |
-| `Config` | 连接配置构建器 |
+| `Config` | 连接配置构建器（也可通过 `gaussdb::driver::config` 使用） |
+| `config::connect_async` / `config::connect_sync` | 配置感知连接辅助函数（需要 `config` 特性） |
+| `config::resolve` | 仅解析配置、密钥链和 TLS，不连接（需要 `config` 特性） |
 | `Statement` | 预编译语句 |
 | `Row` | 查询结果行 |
 | `NoTls` | 无 TLS 连接的标记类型 |
@@ -158,6 +160,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 同步客户端内部会启动一个 tokio 运行时并阻塞等待异步 future。对于性能敏感的应用，建议使用异步 API。
+
+#### 配置感知连接
+
+启用 `config` 特性以使用基于配置文件和密钥链的高级连接解析：
+
+```toml
+[dependencies]
+gaussdb = { version = "0.1.0", features = ["config", "sync", "tls-native-tls"] }
+```
+
+```rust
+use std::path::Path;
+
+// 同步：解析配置、密钥链密码和 TLS，返回已连接的 Client
+let client = gaussdb::config::connect_sync(
+    None,                        // 可选的 dsn 覆盖
+    Some(Path::new("./my.toml")), // 可选的配置文件路径
+    Some("prod"),                // 可选的连接名称
+)?;
+
+// 异步等价形式
+let client = gaussdb::config::connect_async(None, Some(Path::new("./my.toml")), Some("prod")).await?;
+
+// 仅解析而不连接
+let resolved = gaussdb::config::resolve(None, Some(Path::new("./my.toml")), Some("prod"))?;
+// resolved.connection_url、resolved.sslmode、resolved.timeout_config 等
+```
+
+`config` 特性读取 TOML 配置文件、操作系统密钥链和 DSN 覆盖，并根据 `sslmode` 选择正确的 TLS 模式：
+
+- `Disable` → NoTls
+- `Prefer` / `Require` → TLS，跳过证书验证
+- `VerifyCa` → TLS，验证证书
+- `VerifyFull` → TLS，验证证书和主机名
+
+底层配置构建块（例如 `Config`、`SslMode`、`Host`）通过 `gaussdb::driver::config` 重新导出。
 
 ---
 
@@ -766,6 +804,7 @@ pub enum AuthenticationMessage {
 | 功能标志 | 默认 | 描述 |
 |---------|---------|-------------|
 | `sync` | 否 | 启用 `gaussdb::sync` 同步 API |
+| `config` | 否 | 配置感知连接 API（`gaussdb::config`），引入 `toml`、`dirs` 和 `keyring` 依赖 |
 | `tls-native-tls` | 否 | 启用 `gaussdb::native_tls::MakeTlsConnector` |
 | `tls-openssl` | 否 | 启用 `gaussdb::openssl::MakeTlsConnector` |
 | `derive` | 否 | 通过 `opengauss-derive` 启用 `#[derive(ToSql, FromSql)]` |
