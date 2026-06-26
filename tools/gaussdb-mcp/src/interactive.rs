@@ -440,22 +440,28 @@ fn history_path_for(connection_name: &str) -> Option<PathBuf> {
 const SPINNER_DELAY: Duration = Duration::from_millis(150);
 const SPINNER_INTERVAL: Duration = Duration::from_millis(80);
 
-/// Whether the user's locale is Chinese. Precedence: LC_MESSAGES > LC_ALL > LANG.
-/// An explicit non-Chinese locale selects English; an unset/C/POSIX locale falls
-/// back to Chinese (the requested default).
+/// Whether the user's locale is Chinese. POSIX precedence is LC_ALL, then
+/// LC_MESSAGES, then LANG (an empty value is treated as unset). An explicit
+/// non-Chinese locale selects English; an unset/C/POSIX locale falls back to
+/// Chinese (the requested default).
 fn locale_is_chinese() -> bool {
-    for var in ["LC_MESSAGES", "LC_ALL", "LANG"] {
-        if let Ok(val) = std::env::var(var) {
-            let lower = val.to_ascii_lowercase();
-            if lower.starts_with("zh") {
-                return true;
-            }
-            if !lower.is_empty() && !lower.starts_with("c") && !lower.starts_with("posix") {
-                return false;
-            }
+    for var in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        if let Some(val) = std::env::var(var).ok().filter(|v| !v.is_empty()) {
+            return is_chinese_locale_tag(&val);
         }
     }
     true
+}
+
+/// `zh*` and the `C`/`POSIX` locales resolve to Chinese (the requested default);
+/// any other explicit locale does not.
+fn is_chinese_locale_tag(tag: &str) -> bool {
+    let lower = tag.to_ascii_lowercase();
+    lower.starts_with("zh")
+        || lower == "c"
+        || lower == "posix"
+        || lower.starts_with("c.")
+        || lower.starts_with("posix.")
 }
 
 struct ConnInfo {
@@ -467,6 +473,7 @@ struct ConnInfo {
 
 fn print_banner(name: &str, info: &ConnInfo, zh: bool) {
     let endpoint = match info.port {
+        Some(p) if info.host.contains(':') => format!("[{}]:{}", info.host, p),
         Some(p) => format!("{}:{}", info.host, p),
         None => info.host.clone(),
     };
@@ -980,5 +987,36 @@ mod tests {
     fn history_path_empty_name_uses_default() {
         let p = history_path_for("").expect("data dir available in test env");
         assert!(p.ends_with("history/default"));
+    }
+
+    #[test]
+    fn locale_tag_chinese_variants() {
+        assert!(is_chinese_locale_tag("zh_CN.UTF-8"));
+        assert!(is_chinese_locale_tag("zh_TW.UTF-8"));
+        assert!(is_chinese_locale_tag("zh"));
+        assert!(is_chinese_locale_tag("ZH_HK.UTF-8"));
+    }
+
+    #[test]
+    fn locale_tag_c_and_posix_default_to_chinese() {
+        assert!(is_chinese_locale_tag("C"));
+        assert!(is_chinese_locale_tag("C.UTF-8"));
+        assert!(is_chinese_locale_tag("POSIX"));
+        assert!(is_chinese_locale_tag("posix.UTF-8"));
+    }
+
+    #[test]
+    fn locale_tag_other_languages_are_english() {
+        assert!(!is_chinese_locale_tag("en_US.UTF-8"));
+        assert!(!is_chinese_locale_tag("fr_FR.UTF-8"));
+        assert!(!is_chinese_locale_tag("ja_JP.UTF-8"));
+    }
+
+    #[test]
+    fn locale_tag_c_prefixed_languages_not_misclassified_as_c() {
+        assert!(!is_chinese_locale_tag("cs_CZ.UTF-8"));
+        assert!(!is_chinese_locale_tag("ca_ES.UTF-8"));
+        assert!(!is_chinese_locale_tag("cy_GB.UTF-8"));
+        assert!(!is_chinese_locale_tag("ckb_IQ.UTF-8"));
     }
 }
