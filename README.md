@@ -137,7 +137,9 @@ gaussdb-mcp cli -i --format json     # default format for results (table/json/ve
 Drops you into a readline-style SQL shell:
 
 ```
-gaussdb-mcp interactive — connected to 'dev' (postgres). Type .help for commands, .exit to quit.
+gaussdb-mcp interactive — connected to 'dev'
+  host 127.0.0.1:5432  user postgres  database devdb
+end SQL with ';' + Enter to execute (multi-line ok) · .help · .connect · .exit
 $ SELECT 1,
 > 2,
 > 3;

@@ -3,8 +3,11 @@
 #![allow(dead_code)]
 
 use std::borrow::Cow;
+use std::io::IsTerminal;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use rustyline::Editor;
 use rustyline::config::Configurer;
@@ -432,6 +435,96 @@ fn history_path_for(connection_name: &str) -> Option<PathBuf> {
     Some(dir.join(sanitize_history_name(connection_name)))
 }
 
+// ─── Locale-aware REPL UI ───────────────────────────────────────────────────────
+
+const SPINNER_DELAY: Duration = Duration::from_millis(150);
+const SPINNER_INTERVAL: Duration = Duration::from_millis(80);
+
+/// Whether the user's locale is Chinese. POSIX precedence is LC_ALL, then
+/// LC_MESSAGES, then LANG (an empty value is treated as unset). An explicit
+/// non-Chinese locale selects English; an unset/C/POSIX locale falls back to
+/// Chinese (the requested default).
+fn locale_is_chinese() -> bool {
+    for var in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        if let Some(val) = std::env::var(var).ok().filter(|v| !v.is_empty()) {
+            return is_chinese_locale_tag(&val);
+        }
+    }
+    true
+}
+
+/// `zh*` and the `C`/`POSIX` locales resolve to Chinese (the requested default);
+/// any other explicit locale does not.
+fn is_chinese_locale_tag(tag: &str) -> bool {
+    let lower = tag.to_ascii_lowercase();
+    lower.starts_with("zh")
+        || lower == "c"
+        || lower == "posix"
+        || lower.starts_with("c.")
+        || lower.starts_with("posix.")
+}
+
+struct ConnInfo {
+    database: String,
+    user: String,
+    host: String,
+    port: Option<i32>,
+}
+
+fn print_banner(name: &str, info: &ConnInfo, zh: bool) {
+    let endpoint = match info.port {
+        Some(p) if info.host.contains(':') => format!("[{}]:{}", info.host, p),
+        Some(p) => format!("{}:{}", info.host, p),
+        None => info.host.clone(),
+    };
+    if zh {
+        println!("gaussdb-mcp 交互模式 — 已连接到 '{}'", name);
+        println!(
+            "  主机 {}  用户 {}  数据库 {}",
+            endpoint, info.user, info.database
+        );
+        println!("以 ';' 结束并回车执行（支持多行）· .help 命令 · .connect 重连/切换 · .exit 退出");
+    } else {
+        println!("gaussdb-mcp interactive — connected to '{}'", name);
+        println!(
+            "  host {}  user {}  database {}",
+            endpoint, info.user, info.database
+        );
+        println!("end SQL with ';' + Enter to execute (multi-line ok) · .help · .connect · .exit");
+    }
+}
+
+/// Run `fut` with a rotating spinner on stderr while it is pending. The spinner
+/// only appears after `SPINNER_DELAY` (so fast queries don't flicker) and only
+/// when stderr is a terminal. The spinner line is cleared before returning.
+async fn with_spinner<F>(zh: bool, fut: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    if !std::io::stderr().is_terminal() {
+        return fut.await;
+    }
+    let label = if zh { "执行中" } else { "executing" };
+    let frames = ['|', '/', '-', '\\'];
+    let spinner = async {
+        tokio::time::sleep(SPINNER_DELAY).await;
+        let mut i = 0;
+        loop {
+            eprint!("\r{} {}…", frames[i], label);
+            let _ = std::io::stderr().flush();
+            i = (i + 1) % frames.len();
+            tokio::time::sleep(SPINNER_INTERVAL).await;
+        }
+    };
+    let out = tokio::select! {
+        out = fut => out,
+        _ = spinner => unreachable!(),
+    };
+    eprint!("\r\x1b[2K");
+    let _ = std::io::stderr().flush();
+    out
+}
+
 fn resolve_target(
     name: Option<&str>,
     raw: &McpRawConfig,
@@ -473,7 +566,7 @@ fn resolve_target(
 async fn connect(
     target: &ResolvedConnection,
     effective_timeout: &TimeoutConfig,
-) -> Result<(Arc<gaussdb::Client>, String), String> {
+) -> Result<(Arc<gaussdb::Client>, ConnInfo), String> {
     let (client, _handle) = do_connect(&target.connection_url, Some(effective_timeout))
         .await
         .map_err(|e| format!("Connection failed: {}", format_error_chain(e.as_ref())))?;
@@ -494,14 +587,36 @@ async fn connect(
         }
     }
 
-    let db_name: String = match client.query_one("SELECT current_database()", &[]).await {
-        Ok(row) => row
-            .get::<_, Option<&str>>(0)
-            .unwrap_or("(unknown)")
-            .to_string(),
-        Err(_) => "(unknown)".to_string(),
+    let info = match client
+        .query_one(
+            "SELECT current_database(), current_user, host(inet_server_addr()), inet_server_port()",
+            &[],
+        )
+        .await
+    {
+        Ok(row) => ConnInfo {
+            database: row
+                .get::<_, Option<&str>>(0)
+                .unwrap_or("(unknown)")
+                .to_string(),
+            user: row
+                .get::<_, Option<&str>>(1)
+                .unwrap_or("(unknown)")
+                .to_string(),
+            host: row
+                .get::<_, Option<&str>>(2)
+                .unwrap_or("(local socket)")
+                .to_string(),
+            port: row.get::<_, Option<i32>>(3),
+        },
+        Err(_) => ConnInfo {
+            database: "(unknown)".to_string(),
+            user: "(unknown)".to_string(),
+            host: "(unknown)".to_string(),
+            port: None,
+        },
     };
-    Ok((client, db_name))
+    Ok((client, info))
 }
 
 pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
@@ -514,7 +629,8 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
         args.connection_max_lifetime.as_deref(),
         args.timeout_action.as_deref(),
     )?;
-    let (mut client, mut db_name) = connect(&target, &effective_timeout).await?;
+    let (mut client, mut conn_info) = connect(&target, &effective_timeout).await?;
+    let zh = locale_is_chinese();
 
     let mut rl = Editor::<SqlHelper, DefaultHistory>::new()
         .map_err(|e| format!("failed to init editor: {}", e))?;
@@ -538,11 +654,7 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
         None
     };
 
-    println!(
-        "gaussdb-mcp interactive — connected to '{}' ({}). \
-         Type .help for commands, .exit to quit.",
-        target.name, db_name
-    );
+    print_banner(&target.name, &conn_info, zh);
 
     let mut output_target = OutputTarget::Stdout;
     let mut last_result: Option<QueryResult> = None;
@@ -592,11 +704,11 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
                 args.timeout_action.as_deref(),
             ) {
                 Ok((new_target, new_timeout)) => match connect(&new_target, &new_timeout).await {
-                    Ok((new_client, new_db)) => {
+                    Ok((new_client, new_info)) => {
                         let old_name = target.name.clone();
                         target = new_target;
                         client = new_client;
-                        db_name = new_db;
+                        conn_info = new_info;
                         // When the connection actually changed, rotate the
                         // per-connection history file so each connection keeps
                         // its own ↑/↓ history.
@@ -617,7 +729,7 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
                                 let _ = rl.load_history(p);
                             }
                         }
-                        println!("connected to '{}' ({})", target.name, db_name);
+                        print_banner(&target.name, &conn_info, zh);
                     }
                     Err(e) => eprintln!("error: {}", e),
                 },
@@ -645,7 +757,8 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
 
         let split = SqlTokenizer::split_statements(&input);
         for stmt in &split.complete {
-            match execute_sql_buffered(&client, stmt).await {
+            let result = with_spinner(zh, execute_sql_buffered(&client, stmt)).await;
+            match result {
                 Ok(query_result) => {
                     last_result = Some(query_result.clone());
                     match &mut output_target {
@@ -666,10 +779,14 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
                 Err(e) => {
                     eprintln!("error: {}", format_sql_error(&e));
                     if e.as_db_error().is_none() {
-                        eprintln!(
-                            "hint: connection lost — run .connect to reconnect, \
-                             then re-run your statement."
-                        );
+                        if zh {
+                            eprintln!("提示：连接已断开 — 运行 .connect 重连后重新执行语句。");
+                        } else {
+                            eprintln!(
+                                "hint: connection lost — run .connect to reconnect, \
+                                 then re-run your statement."
+                            );
+                        }
                     }
                 }
             }
@@ -870,5 +987,36 @@ mod tests {
     fn history_path_empty_name_uses_default() {
         let p = history_path_for("").expect("data dir available in test env");
         assert!(p.ends_with("history/default"));
+    }
+
+    #[test]
+    fn locale_tag_chinese_variants() {
+        assert!(is_chinese_locale_tag("zh_CN.UTF-8"));
+        assert!(is_chinese_locale_tag("zh_TW.UTF-8"));
+        assert!(is_chinese_locale_tag("zh"));
+        assert!(is_chinese_locale_tag("ZH_HK.UTF-8"));
+    }
+
+    #[test]
+    fn locale_tag_c_and_posix_default_to_chinese() {
+        assert!(is_chinese_locale_tag("C"));
+        assert!(is_chinese_locale_tag("C.UTF-8"));
+        assert!(is_chinese_locale_tag("POSIX"));
+        assert!(is_chinese_locale_tag("posix.UTF-8"));
+    }
+
+    #[test]
+    fn locale_tag_other_languages_are_english() {
+        assert!(!is_chinese_locale_tag("en_US.UTF-8"));
+        assert!(!is_chinese_locale_tag("fr_FR.UTF-8"));
+        assert!(!is_chinese_locale_tag("ja_JP.UTF-8"));
+    }
+
+    #[test]
+    fn locale_tag_c_prefixed_languages_not_misclassified_as_c() {
+        assert!(!is_chinese_locale_tag("cs_CZ.UTF-8"));
+        assert!(!is_chinese_locale_tag("ca_ES.UTF-8"));
+        assert!(!is_chinese_locale_tag("cy_GB.UTF-8"));
+        assert!(!is_chinese_locale_tag("ckb_IQ.UTF-8"));
     }
 }
