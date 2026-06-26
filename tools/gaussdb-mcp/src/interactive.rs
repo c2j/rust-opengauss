@@ -14,7 +14,9 @@ use rustyline::history::DefaultHistory;
 use rustyline::validate::{ValidationContext, ValidationResult, Validator};
 use rustyline_derive::{Completer, Helper, Hinter};
 
-use crate::cli::{CliArgs, OutputFormat, QueryResult, execute_sql_buffered, render_result};
+use crate::cli::{
+    CliArgs, OutputFormat, QueryResult, execute_sql_buffered, format_sql_error, render_result,
+};
 use crate::config::{
     McpRawConfig, ResolvedConnection, TimeoutConfig, read_config, resolve_env_var_connection,
     resolve_single_connection, rewrite_password_to_sentinel, store_keyring_password,
@@ -570,8 +572,13 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
             continue;
         }
 
-        if trimmed == ".connect" || trimmed.starts_with(".connect ") {
-            let name_arg = trimmed.strip_prefix(".connect").unwrap_or("").trim();
+        let mut connect_parts = trimmed.split_whitespace();
+        let is_connect_cmd = connect_parts
+            .next()
+            .map(|c| c.eq_ignore_ascii_case(".connect"))
+            .unwrap_or(false);
+        if is_connect_cmd {
+            let name_arg = connect_parts.next().unwrap_or("");
             let resolved_name = if name_arg.is_empty() {
                 target.name.clone()
             } else {
@@ -657,8 +664,8 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
                     }
                 }
                 Err(e) => {
-                    eprintln!("error: {}", e);
-                    if client.is_closed() {
+                    eprintln!("error: {}", format_sql_error(&e));
+                    if e.as_db_error().is_none() {
                         eprintln!(
                             "hint: connection lost — run .connect to reconnect, \
                              then re-run your statement."

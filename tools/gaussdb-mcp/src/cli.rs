@@ -15,7 +15,7 @@ use futures_util::StreamExt;
 use gaussdb::types::ToSql;
 use serde_json::Value;
 
-fn format_sql_error(err: &gaussdb::Error) -> String {
+pub(crate) fn format_sql_error(err: &gaussdb::Error) -> String {
     if let Some(db_err) = err.as_db_error() {
         let sqlstate = db_err.code().code();
         let sqlcode = sqlstate_to_sqlcode(sqlstate);
@@ -146,16 +146,13 @@ fn strip_leading_comments(sql: &str) -> &str {
 pub(crate) async fn execute_sql_buffered(
     client: &gaussdb::Client,
     sql: &str,
-) -> Result<QueryResult, String> {
+) -> Result<QueryResult, gaussdb::Error> {
     let trimmed = sql.trim();
     let stripped = strip_leading_comments(trimmed);
     let upper = stripped.to_uppercase();
 
     if upper.starts_with("SELECT") || upper.starts_with("EXPLAIN") || upper.starts_with("WITH") {
-        let rows = client
-            .query(trimmed, &[])
-            .await
-            .map_err(|e| format!("Query failed: {}", format_sql_error(&e)))?;
+        let rows = client.query(trimmed, &[]).await?;
 
         if rows.is_empty() {
             return Ok(QueryResult {
@@ -190,10 +187,7 @@ pub(crate) async fn execute_sql_buffered(
             kind: ResultKind::Query,
         })
     } else {
-        let affected = client
-            .execute(trimmed, &[])
-            .await
-            .map_err(|e| format!("Execute failed: {}", format_sql_error(&e)))?;
+        let affected = client.execute(trimmed, &[]).await?;
 
         Ok(QueryResult {
             columns: vec![],
