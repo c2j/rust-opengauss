@@ -170,6 +170,7 @@ $
 |---------|--------|
 | `.help` or `?` | Show help |
 | `.exit` / `.quit` | Exit the REPL |
+| `.connect [<name>]` | Reconnect after a dropped connection, or switch to connection `<name>` (omitted = current connection) |
 | `.history` | Show SQL execution history (current session) |
 | `.clear` / `.cls` | Clear screen |
 | `.output <file>` | Redirect all subsequent SQL output to `file` (append mode) |
@@ -188,6 +189,7 @@ $ .exit
 Notes:
 - Statements execute only on `;` outside quotes/comments (`'...'`, `"..."`, `--`, `/* ... */`).
 - SQL errors print to stderr and the REPL continues.
+- If the server or a firewall drops an idle connection, the next statement fails and the REPL prints a hint to run `.connect`. `.connect` (no argument) re-establishes the current connection; `.connect <name>` switches to a different configured connection without restarting.
 - History deduplicates consecutive identical statements.
 - SQL history persists per connection name under the app data dir (`$XDG_DATA_HOME/gaussdb-mcp/history/<name>` on Linux, `~/Library/Application Support/gaussdb-mcp/history/<name>` on macOS); ↑/↓ reach prior sessions. Pass `--no-history` to opt out. History is stored in plaintext, so avoid running statements that embed secrets, or use `--no-history`.
 - For very large exports, prefer one-shot `cli --format csv` over the REPL — the REPL buffers results to support `.save`.
