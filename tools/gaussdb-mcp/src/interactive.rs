@@ -4,6 +4,7 @@
 
 use std::borrow::Cow;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use rustyline::Editor;
 use rustyline::config::Configurer;
@@ -15,8 +16,8 @@ use rustyline_derive::{Completer, Helper, Hinter};
 
 use crate::cli::{CliArgs, OutputFormat, QueryResult, execute_sql_buffered, render_result};
 use crate::config::{
-    TimeoutConfig, read_config, resolve_env_var_connection, resolve_single_connection,
-    rewrite_password_to_sentinel, store_keyring_password,
+    McpRawConfig, ResolvedConnection, TimeoutConfig, read_config, resolve_env_var_connection,
+    resolve_single_connection, rewrite_password_to_sentinel, store_keyring_password,
 };
 use crate::connection::do_connect;
 use crate::server::format_error_chain;
@@ -267,6 +268,9 @@ fn handle_dot_command(line: &str, ctx: &mut ReplContext) -> DotAction {
         ".help" | "?" => {
             println!(".help / ?            Show this help message");
             println!(".exit / .quit        Exit the REPL");
+            println!(
+                ".connect [<name>]    Reconnect (to <name>, or current connection if omitted)"
+            );
             println!(".history             Show SQL execution history");
             println!(".clear / .cls        Clear the terminal screen");
             println!(
@@ -426,12 +430,14 @@ fn history_path_for(connection_name: &str) -> Option<PathBuf> {
     Some(dir.join(sanitize_history_name(connection_name)))
 }
 
-pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
-    let config_path = args.config_path.map(PathBuf::from);
-    let raw = read_config(config_path)?;
-
-    let target_name = args.connection_name.as_deref().unwrap_or(&raw.default_name);
-
+fn resolve_target(
+    name: Option<&str>,
+    raw: &McpRawConfig,
+    statement_timeout: Option<&str>,
+    connection_max_lifetime: Option<&str>,
+    timeout_action: Option<&str>,
+) -> Result<(ResolvedConnection, TimeoutConfig), String> {
+    let target_name = name.unwrap_or(&raw.default_name);
     let target_conn = raw
         .connections
         .iter()
@@ -443,7 +449,6 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
                 raw.connections.iter().map(|c| &c.name).collect::<Vec<_>>()
             )
         })?;
-
     let target = if raw.is_env_var {
         resolve_env_var_connection(target_conn.url.clone().unwrap())
     } else {
@@ -453,16 +458,21 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
             raw.base_timeout.as_ref(),
         )?
     };
-
     let effective_timeout = TimeoutConfig::from_overrides(
-        args.statement_timeout.as_deref(),
-        args.connection_max_lifetime.as_deref(),
-        args.timeout_action.as_deref(),
+        statement_timeout,
+        connection_max_lifetime,
+        timeout_action,
         Some(&target.timeout_config),
     )
     .map_err(|e| format!("Invalid timeout configuration: {}", e))?;
+    Ok((target, effective_timeout))
+}
 
-    let (client, _handle) = do_connect(&target.connection_url, Some(&effective_timeout))
+async fn connect(
+    target: &ResolvedConnection,
+    effective_timeout: &TimeoutConfig,
+) -> Result<(Arc<gaussdb::Client>, String), String> {
+    let (client, _handle) = do_connect(&target.connection_url, Some(effective_timeout))
         .await
         .map_err(|e| format!("Connection failed: {}", format_error_chain(e.as_ref())))?;
 
@@ -489,6 +499,20 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
             .to_string(),
         Err(_) => "(unknown)".to_string(),
     };
+    Ok((client, db_name))
+}
+
+pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
+    let raw = read_config(args.config_path.map(PathBuf::from))?;
+
+    let (mut target, effective_timeout) = resolve_target(
+        args.connection_name.as_deref(),
+        &raw,
+        args.statement_timeout.as_deref(),
+        args.connection_max_lifetime.as_deref(),
+        args.timeout_action.as_deref(),
+    )?;
+    let (mut client, mut db_name) = connect(&target, &effective_timeout).await?;
 
     let mut rl = Editor::<SqlHelper, DefaultHistory>::new()
         .map_err(|e| format!("failed to init editor: {}", e))?;
@@ -496,7 +520,7 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
 
     let _ = rl.set_max_history_size(HISTORY_MAX_ENTRIES);
 
-    let history_path: Option<PathBuf> = if !args.no_history {
+    let mut history_path: Option<PathBuf> = if !args.no_history {
         match history_path_for(&target.name) {
             Some(p) => {
                 if let Some(parent) = p.parent() {
@@ -546,6 +570,55 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
             continue;
         }
 
+        if trimmed == ".connect" || trimmed.starts_with(".connect ") {
+            let name_arg = trimmed.strip_prefix(".connect").unwrap_or("").trim();
+            let resolved_name = if name_arg.is_empty() {
+                target.name.clone()
+            } else {
+                name_arg.to_string()
+            };
+            match resolve_target(
+                Some(&resolved_name),
+                &raw,
+                args.statement_timeout.as_deref(),
+                args.connection_max_lifetime.as_deref(),
+                args.timeout_action.as_deref(),
+            ) {
+                Ok((new_target, new_timeout)) => match connect(&new_target, &new_timeout).await {
+                    Ok((new_client, new_db)) => {
+                        let old_name = target.name.clone();
+                        target = new_target;
+                        client = new_client;
+                        db_name = new_db;
+                        // When the connection actually changed, rotate the
+                        // per-connection history file so each connection keeps
+                        // its own ↑/↓ history.
+                        if target.name != old_name {
+                            if let Some(old_p) = &history_path {
+                                let _ = rl.save_history(old_p);
+                            }
+                            history_path = if !args.no_history {
+                                history_path_for(&target.name)
+                            } else {
+                                None
+                            };
+                            if let Some(p) = &history_path {
+                                if let Some(parent) = p.parent() {
+                                    let _ = std::fs::create_dir_all(parent);
+                                }
+                                let _ = rl.clear_history();
+                                let _ = rl.load_history(p);
+                            }
+                        }
+                        println!("connected to '{}' ({})", target.name, db_name);
+                    }
+                    Err(e) => eprintln!("error: {}", e),
+                },
+                Err(e) => eprintln!("error: {}", e),
+            }
+            continue;
+        }
+
         if trimmed.starts_with('.') || trimmed == "?" {
             let history_snapshot: Vec<String> = rl.history().iter().cloned().collect();
             let mut ctx = ReplContext {
@@ -585,6 +658,12 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
                 }
                 Err(e) => {
                     eprintln!("error: {}", e);
+                    if client.is_closed() {
+                        eprintln!(
+                            "hint: connection lost — run .connect to reconnect, \
+                             then re-run your statement."
+                        );
+                    }
                 }
             }
         }
