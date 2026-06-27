@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Support multiple named database connections in `~/.gaussdb-mcp.toml`, selectable at MCP tool invocation time via an optional `connection_name` parameter.
+**Goal:** Support multiple named database connections in `~/.gaussdb.toml`, selectable at MCP tool invocation time via an optional `connection_name` parameter.
 
 **Architecture:** Replace the single `ConnectionState` with a `HashMap<String, ConnectionState>`. TOML config adds `[[connections]]` array with backward compatibility for the old flat format. Each MCP tool gains an optional `connection_name` parameter that defaults to the first (or explicitly marked default) connection.
 

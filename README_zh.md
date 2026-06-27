@@ -39,7 +39,7 @@ gaussdb-mcp
 ### 使用配置文件
 
 ```sh
-cat > ~/.gaussdb-mcp.toml << 'EOF'
+cat > ~/.gaussdb.toml << 'EOF'
 host = "127.0.0.1"
 port = 5432
 user = "gaussdb"
@@ -171,7 +171,7 @@ COMMANDS:
     cli             从命令行执行 SQL
 
 全局选项（适用于所有子命令）:
-    --config <PATH>           配置文件路径 (默认: ~/.gaussdb-mcp.toml)
+    --config <PATH>           配置文件路径 (默认: ~/.gaussdb.toml)
     --name <NAME>             目标连接名称
 
 SERVE:
@@ -201,7 +201,7 @@ CLI:
 gaussdb-mcp check
 
 # 检查特定命名连接
-gaussdb-mcp check --name prod --config ~/.gaussdb-mcp.toml
+gaussdb-mcp check --name prod --config ~/.gaussdb.toml
 
 # 详细输出 (版本、GUC 参数、TLS 证书详情、耗时)
 gaussdb-mcp check --verbose
@@ -221,13 +221,13 @@ gaussdb-mcp cli --check-connection --name prod -v
 
 ```sh
 # 为第一个/默认连接存储密码（交互式提示输入）
-gaussdb-mcp store-password --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password --config ~/.gaussdb.toml
 
 # 为命名连接存储密码
-gaussdb-mcp store-password --name prod --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password --name prod --config ~/.gaussdb.toml
 
 # 非交互模式（从 stdin 管道读取，适用于 CI/脚本）：
-#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name prod --config ~/.gaussdb-mcp.toml
+#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name prod --config ~/.gaussdb.toml
 
 # 首次成功 MCP 连接时，配置文件中的明文密码会自动迁移
 # 至操作系统密钥链，配置文件更新为 password = "keyring"
@@ -347,7 +347,7 @@ gaussdb-mcp store-password --name prod --config ~/.gaussdb-mcp.toml
   "mcpServers": {
     "gaussdb": {
       "command": "/path/to/gaussdb-mcp",
-      "args": ["mcp", "--config", "/path/to/gaussdb-mcp.toml"]
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
     }
   }
 }
@@ -454,7 +454,7 @@ GAUSSDB_URL="host=db.example.com user=gaussdb dbname=postgres sslmode=verify-ful
 
 ## 日志
 
-日志写入 `$XDG_DATA_HOME/gaussdb-mcp/gaussdb-mcp.log`（Linux 上为 `~/.local/share/gaussdb-mcp/`，macOS 上为 `~/Library/Application Support/gaussdb-mcp/`），每日滚动。这避免了对 stdio MCP 传输的干扰。
+日志写入 `$XDG_DATA_HOME/gaussdb/gaussdb.log`（Linux 上为 `~/.local/share/gaussdb/`，macOS 上为 `~/Library/Application Support/gaussdb/`），每日滚动。这避免了对 stdio MCP 传输的干扰。
 
 通过 `RUST_LOG` 控制日志级别：
 
