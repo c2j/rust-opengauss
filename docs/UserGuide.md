@@ -56,7 +56,7 @@ Both `GAUSSDB_URL` and `DATABASE_URL` are accepted. `GAUSSDB_URL` takes preceden
 
 ### 2. Config File
 
-Default location: `~/.gaussdb-mcp.toml`
+Default location: `~/.gaussdb.toml`
 
 **Single connection:**
 
@@ -162,7 +162,7 @@ The server starts and waits for MCP client connections via stdin/stdout.
   "mcpServers": {
     "gaussdb": {
       "command": "/path/to/target/release/gaussdb-mcp",
-      "args": ["mcp", "--config", "/path/to/gaussdb-mcp.toml"]
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
     }
   }
 }
@@ -180,7 +180,7 @@ Add to `.cursor/mcp.json` in your project root:
   "mcpServers": {
     "gaussdb": {
       "command": "/path/to/target/release/gaussdb-mcp",
-      "args": ["mcp", "--config", "/path/to/gaussdb-mcp.toml"]
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
     }
   }
 }
@@ -406,13 +406,13 @@ Adds detailed server information:
 
 ```sh
 # Store password for first connection in config (interactive prompt)
-gaussdb-mcp store-password --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password --config ~/.gaussdb.toml
 
 # Store password for a named connection
-gaussdb-mcp store-password --name production --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password --name production --config ~/.gaussdb.toml
 
 # Non-interactive (read from stdin pipe, e.g. CI/scripts):
-#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name production --config ~/.gaussdb-mcp.toml
+#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name production --config ~/.gaussdb.toml
 ```
 
 ### How It Works
@@ -500,7 +500,7 @@ The tool tests all three modes and recommends which to use.
 export GAUSSDB_URL="host=localhost user=postgres password=secret dbname=postgres"
 
 # Option 2: Create config file
-cat > ~/.gaussdb-mcp.toml << 'EOF'
+cat > ~/.gaussdb.toml << 'EOF'
 host = "localhost"
 user = "postgres"
 password = "secret"
@@ -537,7 +537,7 @@ psql -h localhost -U postgres -d postgres -c "SELECT 1"
 **Solution:**
 ```sh
 # Store the password (interactive prompt)
-gaussdb-mcp store-password --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password --config ~/.gaussdb.toml
 
 # Or temporarily use plaintext (will auto-migrate)
 # Edit config: change password = "keyring" to password = "YourPassword"
@@ -555,8 +555,8 @@ gaussdb-mcp cli --sql "INSERT INTO ..."
 ### Log file location
 
 Logs are written to:
-- **Linux**: `~/.local/share/gaussdb-mcp/gaussdb-mcp.log`
-- **macOS**: `~/Library/Application Support/gaussdb-mcp/gaussdb-mcp.log`
+- **Linux**: `~/.local/share/gaussdb/gaussdb.log`
+- **macOS**: `~/Library/Application Support/gaussdb/gaussdb.log`
 
 Enable debug logging:
 ```sh

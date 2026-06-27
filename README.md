@@ -40,7 +40,7 @@ gaussdb-mcp
 ### Use a config file
 
 ```sh
-cat > ~/.gaussdb-mcp.toml << 'EOF'
+cat > ~/.gaussdb.toml << 'EOF'
 host = "127.0.0.1"
 port = 5432
 user = "gaussdb"
@@ -193,7 +193,7 @@ Notes:
 - SQL errors print to stderr and the REPL continues.
 - If the server or a firewall drops an idle connection, the next statement fails and the REPL prints a hint to run `.connect`. `.connect` (no argument) re-establishes the current connection; `.connect <name>` switches to a different configured connection without restarting.
 - History deduplicates consecutive identical statements.
-- SQL history persists per connection name under the app data dir (`$XDG_DATA_HOME/gaussdb-mcp/history/<name>` on Linux, `~/Library/Application Support/gaussdb-mcp/history/<name>` on macOS); ↑/↓ reach prior sessions. Pass `--no-history` to opt out. History is stored in plaintext, so avoid running statements that embed secrets, or use `--no-history`.
+- SQL history persists per connection name under the app data dir (`$XDG_DATA_HOME/gaussdb/history/<name>` on Linux, `~/Library/Application Support/gaussdb/history/<name>` on macOS); ↑/↓ reach prior sessions. Pass `--no-history` to opt out. History is stored in plaintext, so avoid running statements that embed secrets, or use `--no-history`.
 - For very large exports, prefer one-shot `cli --format csv` over the REPL — the REPL buffers results to support `.save`.
 
 ## Configuration
@@ -251,7 +251,7 @@ COMMANDS:
     cli             Execute SQL from command line
 
 GLOBAL OPTIONS (apply to all commands):
-    --config <PATH>           Path to config file (default: ~/.gaussdb-mcp.toml)
+    --config <PATH>           Path to config file (default: ~/.gaussdb.toml)
     --name <NAME>             Target connection name
 
 SERVE:
@@ -282,7 +282,7 @@ CLI:
 gaussdb-mcp check
 
 # Check a specific named connection
-gaussdb-mcp check --name prod --config ~/.gaussdb-mcp.toml
+gaussdb-mcp check --name prod --config ~/.gaussdb.toml
 
 # Verbose output (version, GUC params, TLS cert details, timing)
 gaussdb-mcp check --verbose
@@ -302,13 +302,13 @@ The diagnostic tool:
 
 ```sh
 # Store password for the first/default connection (interactive prompt)
-gaussdb-mcp store-password --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password --config ~/.gaussdb.toml
 
 # Store password for a named connection
-gaussdb-mcp store-password --name prod --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password --name prod --config ~/.gaussdb.toml
 
 # Non-interactive (read from stdin pipe, e.g. CI/scripts):
-#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name prod --config ~/.gaussdb-mcp.toml
+#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name prod --config ~/.gaussdb.toml
 
 # On first successful MCP connection with plaintext config password,
 # auto-migration moves it to OS keychain and updates config to `password = "keyring"`
@@ -428,7 +428,7 @@ Add to `.cursor/mcp.json`:
   "mcpServers": {
     "gaussdb": {
       "command": "/path/to/gaussdb-mcp",
-      "args": ["mcp", "--config", "/path/to/gaussdb-mcp.toml"]
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
     }
   }
 }
@@ -535,7 +535,7 @@ Supports openGauss-specific authentication methods in addition to standard Postg
 
 ## Logging
 
-Logs are written to `$XDG_DATA_HOME/gaussdb-mcp/gaussdb-mcp.log` (or `~/.local/share/gaussdb-mcp/` on Linux, `~/Library/Application Support/gaussdb-mcp/` on macOS), rotated daily. This avoids interference with the stdio-based MCP transport.
+Logs are written to `$XDG_DATA_HOME/gaussdb/gaussdb.log` (or `~/.local/share/gaussdb/` on Linux, `~/Library/Application Support/gaussdb/` on macOS), rotated daily. This avoids interference with the stdio-based MCP transport.
 
 Set `RUST_LOG` for log level control:
 

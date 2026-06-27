@@ -64,6 +64,20 @@ pub enum ConnectError {
 pub const KEYRING_SENTINEL: &str = "keyring";
 pub const DEFAULT_STATEMENT_TIMEOUT_SECS: u64 = 600;
 
+/// Default keyring service name used by all `gaussdb`-family tools.
+pub const DEFAULT_KEYRING_SERVICE: &str = "gaussdb";
+
+/// Default config filename (prepended with `.` by `default_config_path`).
+pub const DEFAULT_CONFIG_FILENAME: &str = "gaussdb.toml";
+
+/// Legacy keyring service name from the `gaussdb-mcp` binary (pre-unification).
+/// Used as a fallback during the transition period.
+pub const LEGACY_KEYRING_SERVICE: &str = "gaussdb-mcp";
+
+/// Legacy config filename from the `gaussdb-mcp` binary (pre-unification).
+/// Used as a fallback during the transition period.
+pub const LEGACY_CONFIG_FILENAME: &str = "gaussdb-mcp.toml";
+
 // ─── Timeout types ───────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -472,13 +486,29 @@ fn default_config_path(filename: &str) -> Option<PathBuf> {
 fn find_config_path(config_path: Option<PathBuf>, filename: &str) -> Result<PathBuf, ConfigError> {
     match config_path {
         Some(p) => Ok(p),
-        None => match default_config_path(filename) {
-            Some(p) if p.exists() => Ok(p),
-            _ => Err(ConfigError::ConfigNotFound {
+        None => {
+            if let Some(ref p) = default_config_path(filename) {
+                if p.exists() {
+                    return Ok(p.clone());
+                }
+            }
+            if filename == DEFAULT_CONFIG_FILENAME {
+                if let Some(ref legacy) = default_config_path(LEGACY_CONFIG_FILENAME) {
+                    if legacy.exists() {
+                        tracing::warn!(
+                            path = %legacy.display(),
+                            "reading legacy config path; rename to ~/.{} before next release",
+                            DEFAULT_CONFIG_FILENAME,
+                        );
+                        return Ok(legacy.clone());
+                    }
+                }
+            }
+            Err(ConfigError::ConfigNotFound {
                 searched_path: default_config_path(filename)
                     .unwrap_or_else(|| PathBuf::from(filename)),
-            }),
-        },
+            })
+        }
     }
 }
 
@@ -509,7 +539,19 @@ pub fn resolve_single_connection(
     };
 
     if is_sentinel || has_no_password {
-        let pw = read_keyring_password(&keyring_user, service)?;
+        let pw = read_keyring_password(&keyring_user, service).or_else(|e| {
+            if service == DEFAULT_KEYRING_SERVICE {
+                tracing::warn!(
+                    legacy_service = LEGACY_KEYRING_SERVICE,
+                    "keyring entry not found under service '{}'; retrying with legacy service; \
+                     re-store the password with the new service name before next release",
+                    DEFAULT_KEYRING_SERVICE,
+                );
+                read_keyring_password(&keyring_user, LEGACY_KEYRING_SERVICE)
+            } else {
+                Err(e)
+            }
+        })?;
         conn.password = Some(pw);
     }
 
@@ -549,7 +591,7 @@ pub fn resolve_single_connection(
 
 // ─── Config reading ──────────────────────────────────────────────────
 
-pub fn read_config(config_path: Option<PathBuf>, _service: &str) -> Result<RawConfig, ConfigError> {
+pub fn read_config(config_path: Option<PathBuf>) -> Result<RawConfig, ConfigError> {
     if let Ok(url) = std::env::var("GAUSSDB_URL").or_else(|_| std::env::var("DATABASE_URL")) {
         let conn = NamedConnection {
             name: "default".to_string(),
@@ -572,7 +614,7 @@ pub fn read_config(config_path: Option<PathBuf>, _service: &str) -> Result<RawCo
         });
     }
 
-    let config_path = find_config_path(config_path, "gaussdb.toml")?;
+    let config_path = find_config_path(config_path, DEFAULT_CONFIG_FILENAME)?;
     let content = std::fs::read_to_string(&config_path)?;
 
     let config: MultiConfig = toml::from_str(&content).map_err(|e| ConfigError::ConfigParse {
@@ -637,7 +679,7 @@ pub fn resolve(
         return Ok(resolve_env_var_connection(url.to_string()));
     }
 
-    let raw = read_config(path.map(|p| p.to_path_buf()), "gaussdb")?;
+    let raw = read_config(path.map(|p| p.to_path_buf()))?;
     let target_name = name.unwrap_or(&raw.default_name).to_string();
     let conn = raw
         .connections
@@ -652,7 +694,7 @@ pub fn resolve(
         conn,
         raw.config_path.clone(),
         raw.base_timeout.as_ref(),
-        "gaussdb",
+        DEFAULT_KEYRING_SERVICE,
     )
 }
 

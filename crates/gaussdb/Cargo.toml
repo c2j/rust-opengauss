@@ -27,7 +27,7 @@ tls-native-tls = ["dep:opengauss-native-tls", "dep:native-tls"]
 tls-openssl    = ["dep:opengauss-openssl"]
 
 # 高层配置解析模块:TOML 配置、密钥链密码、SslMode/TLS 逻辑
-config = ["dep:toml", "dep:dirs", "dep:keyring", "dep:serde"]
+config = ["dep:toml", "dep:dirs", "dep:keyring", "dep:serde", "dep:tracing"]
 
 # derive 宏透传(MF1):让用户能用 #[derive(ToSql, FromSql)]
 derive = ["tokio-opengauss/derive"]
@@ -72,6 +72,7 @@ toml        = { version = "0.8", optional = true }
 dirs        = { version = "6", optional = true }
 keyring     = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"], optional = true }
 serde       = { version = "1", features = ["derive"], optional = true }
+tracing     = { version = "0.1", optional = true }
 thiserror   = "2"
 
 [dev-dependencies]

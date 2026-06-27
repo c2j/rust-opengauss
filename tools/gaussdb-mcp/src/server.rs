@@ -649,7 +649,7 @@ impl GaussdbMcp {
                         ),
                         Some(json!({
                             "connection_name": name,
-                            "hint": "Check your gaussdb-mcp configuration and OS keychain access"
+                            "hint": "Check your gaussdb configuration and OS keychain access"
                         })),
                     )
                 })?;
@@ -1201,7 +1201,7 @@ impl GaussdbMcp {
 }
 
 #[tool_handler(
-    name = "gaussdb-mcp",
+    name = "gaussdb",
     version = "0.5.2",
     instructions = "MCP server for openGauss database introspection with multi-connection support"
 )]

@@ -56,7 +56,7 @@ export DATABASE_URL="host=127.0.0.1 user=myuser password=mypass dbname=mydb"  # 
 
 ### 2. 配置文件
 
-默认位置：`~/.gaussdb-mcp.toml`
+默认位置：`~/.gaussdb.toml`
 
 **单连接：**
 
@@ -162,7 +162,7 @@ gaussdb-mcp mcp --config ~/my-gaussdb-config.toml
   "mcpServers": {
     "gaussdb": {
       "command": "/path/to/target/release/gaussdb-mcp",
-      "args": ["mcp", "--config", "/path/to/gaussdb-mcp.toml"]
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
     }
   }
 }
@@ -180,7 +180,7 @@ gaussdb-mcp mcp --config ~/my-gaussdb-config.toml
   "mcpServers": {
     "gaussdb": {
       "command": "/path/to/target/release/gaussdb-mcp",
-      "args": ["mcp", "--config", "/path/to/gaussdb-mcp.toml"]
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
     }
   }
 }
@@ -406,13 +406,13 @@ gaussdb-mcp --check-connection production --config ~/prod-config.toml
 
 ```sh
 # 为配置文件中的第一个连接存储密码（交互式提示输入）
-gaussdb-mcp store-password --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password --config ~/.gaussdb.toml
 
 # 为命名连接存储密码
-gaussdb-mcp store-password --name production --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password --name production --config ~/.gaussdb.toml
 
 # 非交互模式（从 stdin 管道读取，适用于 CI/脚本）：
-#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name production --config ~/.gaussdb-mcp.toml
+#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name production --config ~/.gaussdb.toml
 ```
 
 ### 工作原理
@@ -500,7 +500,7 @@ gaussdb-mcp --check-connection
 export GAUSSDB_URL="host=localhost user=postgres password=secret dbname=postgres"
 
 # 方式二：创建配置文件
-cat > ~/.gaussdb-mcp.toml << 'EOF'
+cat > ~/.gaussdb.toml << 'EOF'
 host = "localhost"
 user = "postgres"
 password = "secret"
@@ -537,7 +537,7 @@ psql -h localhost -U postgres -d postgres -c "SELECT 1"
 **解决方案：**
 ```sh
 # 存储密码（交互式提示输入）
-gaussdb-mcp store-password --config ~/.gaussdb-mcp.toml
+gaussdb-mcp store-password --config ~/.gaussdb.toml
 
 # 或临时使用明文（会自动迁移）
 # 编辑配置文件：将 password = "keyring" 改为 password = "YourPassword"
@@ -555,8 +555,8 @@ gaussdb-mcp cli --sql "INSERT INTO ..."
 ### 日志文件位置
 
 日志写入位置：
-- **Linux**：`~/.local/share/gaussdb-mcp/gaussdb-mcp.log`
-- **macOS**：`~/Library/Application Support/gaussdb-mcp/gaussdb-mcp.log`
+- **Linux**：`~/.local/share/gaussdb/gaussdb.log`
+- **macOS**：`~/Library/Application Support/gaussdb/gaussdb.log`
 
 启用调试日志：
 ```sh

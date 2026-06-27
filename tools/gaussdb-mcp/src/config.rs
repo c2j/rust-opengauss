@@ -4,13 +4,13 @@ use std::sync::Arc;
 // ─── Re-exports from gaussdb::config ─────────────────────────────────
 
 pub(crate) use gaussdb::config::{
-    KEYRING_SENTINEL, MultiConfig, NamedConnection, PasswordSource, ResolvedConnection,
-    TimeoutAction, TimeoutConfig,
+    DEFAULT_CONFIG_FILENAME, KEYRING_SENTINEL, LEGACY_CONFIG_FILENAME, LEGACY_KEYRING_SERVICE,
+    MultiConfig, NamedConnection, PasswordSource, ResolvedConnection, TimeoutAction, TimeoutConfig,
 };
 
 // ─── MCP-specific constants ──────────────────────────────────────────
 
-pub(crate) const KEYRING_SERVICE: &str = "gaussdb-mcp";
+pub(crate) use gaussdb::config::DEFAULT_KEYRING_SERVICE as KEYRING_SERVICE;
 
 // ─── McpRawConfig wrapper (adds is_env_var) ─────────────────────────
 
@@ -36,21 +36,39 @@ pub(crate) enum LazyConnectionEntry {
 // ─── MCP-specific config path helpers ────────────────────────────────
 
 pub(crate) fn default_config_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|p| p.join(".gaussdb-mcp.toml"))
+    dirs::home_dir().map(|p| p.join(format!(".{}", DEFAULT_CONFIG_FILENAME)))
+}
+
+fn legacy_config_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|p| p.join(format!(".{}", LEGACY_CONFIG_FILENAME)))
 }
 
 pub(crate) fn find_config_path(opt: Option<PathBuf>) -> Result<PathBuf, String> {
     match opt {
         Some(p) => Ok(p),
-        None => match default_config_path() {
-            Some(p) if p.exists() => Ok(p),
-            _ => Err(
+        None => {
+            if let Some(ref p) = default_config_path() {
+                if p.exists() {
+                    return Ok(p.clone());
+                }
+            }
+            if let Some(ref legacy) = legacy_config_path() {
+                if legacy.exists() {
+                    tracing::warn!(
+                        path = %legacy.display(),
+                        "reading legacy config path; rename to ~/.{} before next release",
+                        DEFAULT_CONFIG_FILENAME,
+                    );
+                    return Ok(legacy.clone());
+                }
+            }
+            Err(
                 "No connection configuration found. Use one of:\n\
                  \n\
                  \u{20} 1. Set GAUSSDB_URL or DATABASE_URL environment variable\n\
                  \u{20}    export GAUSSDB_URL=\"host=localhost user=postgres password=secret dbname=mydb\"\n\
                  \n\
-                 \u{20} 2. Create ~/.gaussdb-mcp.toml config file:\n\
+                 \u{20} 2. Create ~/.gaussdb.toml config file:\n\
                  \u{20}    host = \"localhost\"\n\
                  \u{20}    user = \"postgres\"\n\
                  \u{20}    password = \"secret\"\n\
@@ -60,8 +78,8 @@ pub(crate) fn find_config_path(opt: Option<PathBuf>) -> Result<PathBuf, String> 
                  \n\
                  \u{20} Password will be migrated to OS keychain on first successful connection."
                     .to_string(),
-            ),
-        },
+            )
+        }
     }
 }
 
@@ -150,15 +168,31 @@ pub(crate) fn store_keyring_password(username: &str, password: &str) -> Result<(
 pub(crate) fn read_keyring_password(username: &str) -> Result<String, String> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, username)
         .map_err(|e| format!("keyring entry creation failed: {}", e))?;
-    entry.get_password().map_err(|e| {
-        format!(
-            "keyring password not found for '{}'. Store it first:\n  \
-             gaussdb-mcp store-password <password> --config <path>\n  \
-             or set password in config file as plaintext (will be migrated automatically).\n  \
-             Keyring error: {}",
-            username, e
-        )
-    })
+    match entry.get_password() {
+        Ok(pw) => Ok(pw),
+        Err(primary_err) => {
+            let legacy_entry = keyring::Entry::new(LEGACY_KEYRING_SERVICE, username)
+                .map_err(|e| format!("keyring entry creation failed: {}", e))?;
+            match legacy_entry.get_password() {
+                Ok(pw) => {
+                    tracing::warn!(
+                        legacy_service = LEGACY_KEYRING_SERVICE,
+                        "keyring entry not found under service '{}'; using legacy service; \
+                         re-store the password with the new service name before next release",
+                        KEYRING_SERVICE,
+                    );
+                    Ok(pw)
+                }
+                Err(_) => Err(format!(
+                    "keyring password not found for '{}'. Store it first:\n  \
+                     gaussdb store-password <password> --config <path>\n  \
+                     or set password in config file as plaintext (will be migrated automatically).\n  \
+                     Keyring error: {}",
+                    username, primary_err
+                )),
+            }
+        }
+    }
 }
 
 pub(crate) fn rewrite_password_to_sentinel(
