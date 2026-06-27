@@ -137,7 +137,7 @@ struct TlsCertInfo {
 fn init_logging() {
     let log_dir = dirs::data_local_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("gaussdb-mcp");
+        .join("gaussdb");
 
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
         eprintln!(
@@ -147,7 +147,7 @@ fn init_logging() {
         );
     }
 
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "gaussdb-mcp.log");
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "gaussdb.log");
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("gaussdb_mcp=info"));
 
@@ -158,7 +158,7 @@ fn init_logging() {
         .with_target(false)
         .init();
 
-    info!("log file: {}/gaussdb-mcp.log", log_dir.display());
+    info!("log file: {}/gaussdb.log", log_dir.display());
 }
 
 // ─── Keyring helpers ───────────────────────────────────────────────────────────

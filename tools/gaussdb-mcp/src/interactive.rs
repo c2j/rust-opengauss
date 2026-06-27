@@ -427,10 +427,15 @@ fn sanitize_history_name(name: &str) -> String {
 
 /// Resolve the per-connection history file path under the app's local data dir.
 ///
-/// Layout: `$data_local_dir/gaussdb-mcp/history/<sanitized_name>` — mirrors the
+/// Layout: `$data_local_dir/gaussdb/history/<sanitized_name>` — mirrors the
 /// existing log-dir convention in `main.rs::init_logging`. Returns `None` only
 /// when the platform cannot provide a local data directory.
 fn history_path_for(connection_name: &str) -> Option<PathBuf> {
+    let dir = dirs::data_local_dir()?.join("gaussdb").join("history");
+    Some(dir.join(sanitize_history_name(connection_name)))
+}
+
+fn legacy_history_path_for(connection_name: &str) -> Option<PathBuf> {
     let dir = dirs::data_local_dir()?.join("gaussdb-mcp").join("history");
     Some(dir.join(sanitize_history_name(connection_name)))
 }
@@ -478,14 +483,14 @@ fn print_banner(name: &str, info: &ConnInfo, zh: bool) {
         None => info.host.clone(),
     };
     if zh {
-        println!("gaussdb-mcp 交互模式 — 已连接到 '{}'", name);
+        println!("gaussdb 交互模式 — 已连接到 '{}'", name);
         println!(
             "  主机 {}  用户 {}  数据库 {}",
             endpoint, info.user, info.database
         );
         println!("以 ';' 结束并回车执行（支持多行）· .help 命令 · .connect 重连/切换 · .exit 退出");
     } else {
-        println!("gaussdb-mcp interactive — connected to '{}'", name);
+        println!("gaussdb interactive — connected to '{}'", name);
         println!(
             "  host {}  user {}  database {}",
             endpoint, info.user, info.database
@@ -645,7 +650,18 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 // Tolerate missing file on first run.
-                let _ = rl.load_history(&p);
+                if rl.load_history(&p).is_err() {
+                    if let Some(ref legacy) = legacy_history_path_for(&target.name) {
+                        if legacy.exists() {
+                            tracing::warn!(
+                                path = %legacy.display(),
+                                "reading legacy SQL history; move this file to {} before next release",
+                                p.display(),
+                            );
+                            let _ = rl.load_history(legacy);
+                        }
+                    }
+                }
                 Some(p)
             }
             None => None,
@@ -726,7 +742,19 @@ pub(crate) async fn run_interactive(args: CliArgs) -> Result<(), String> {
                                     let _ = std::fs::create_dir_all(parent);
                                 }
                                 let _ = rl.clear_history();
-                                let _ = rl.load_history(p);
+                                if rl.load_history(p).is_err() {
+                                    if let Some(ref legacy) = legacy_history_path_for(&target.name)
+                                    {
+                                        if legacy.exists() {
+                                            tracing::warn!(
+                                                path = %legacy.display(),
+                                                "reading legacy SQL history; move this file to {} before next release",
+                                                p.display(),
+                                            );
+                                            let _ = rl.load_history(legacy);
+                                        }
+                                    }
+                                }
                             }
                         }
                         print_banner(&target.name, &conn_info, zh);
@@ -980,7 +1008,7 @@ mod tests {
     fn history_path_ends_with_sanitized_name_under_history_dir() {
         let p = history_path_for("prod/shard1").expect("data dir available in test env");
         assert!(p.ends_with("history/prod_shard1"));
-        assert!(p.to_string_lossy().contains("gaussdb-mcp"));
+        assert!(p.to_string_lossy().contains("gaussdb"));
     }
 
     #[test]
