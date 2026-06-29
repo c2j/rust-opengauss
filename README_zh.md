@@ -1,6 +1,6 @@
-# gaussdb-mcp
+# gaussdb
 
-一个独立的 MCP (Model Context Protocol) 服务器，用于 [openGauss](https://opengauss.org/) 数据库内省，同时内置 CLI 模式支持直接 SQL 执行。专为 Claude、Cursor 等 AI 助手及其它 MCP 兼容工具设计。
+一个独立的 MCP (Model Context Protocol) 服务器，用于 [openGauss](https://opengauss.org/) 数据库内省，同时内置 CLI 模式支持直接 SQL 执行。专为 OpenCode、OpenClaw、通义灵码（VSCode/IDEA）、Claude、Cursor 等 AI 助手及 MCP 兼容工具设计。
 
 基于 openGauss/PostgreSQL 线协议 (v3.0+) 构建，**零 FFI 依赖** — 无需 libpq，无需 C 库。
 
@@ -8,6 +8,7 @@
 
 - **MCP 服务器** — 通过 MCP 协议提供 6 个数据库内省工具
 - **CLI 模式** — 从终端直接执行 SQL，支持 `--sql`、`--file` 和标准输入
+- **交互式 REPL** — `cli -i` 进入类 readline 的 SQL Shell，支持历史记录、多行输入和点命令（`.help`、`.output`、`.save` 等）
 - **多连接支持** — 在单个 TOML 文件中配置多个命名数据库连接，按工具调用切换
 - **操作系统密钥链密码** — 通过 macOS 钥匙串 / Windows 凭据管理器 / Linux Secret Service 安全管理密码
 - **密码自动迁移** — 首次连接成功时，明文密码自动迁移至操作系统密钥链
@@ -21,19 +22,31 @@
 
 ### 安装
 
+**下载预编译版本（推荐）：**
+
+从 [GitHub Releases](https://github.com/c2j/rust-opengauss/releases) 下载对应平台的 zip 包，解压后将 `gaussdb` 放入 PATH 即可。
+
+```sh
+unzip gaussdb-*.zip
+sudo mv gaussdb /usr/local/bin/       # 或放到 ~/.local/bin/
+gaussdb --help
+```
+
+**从源码构建：**
+
 ```sh
 # 从源码构建 (需要 Rust 1.85+)
 cargo build -p gaussdb-mcp --release
 
-# 二进制文件名为 gaussdb 或 gaussdb-mcp
-./target/release/gaussdb-mcp --help
+# 二进制文件名为 gaussdb
+./target/release/gaussdb --help
 ```
 
 ### 通过环境变量连接
 
 ```sh
 export GAUSSDB_URL="host=127.0.0.1 user=gaussdb password=secret dbname=postgres"
-gaussdb-mcp
+gaussdb
 ```
 
 ### 使用配置文件
@@ -46,20 +59,20 @@ user = "gaussdb"
 password = "secret"
 dbname = "postgres"
 EOF
-gaussdb-mcp
+gaussdb
 ```
 
 ### 快速 CLI 查询
 
 ```sh
 # 执行 SELECT 查询
-gaussdb-mcp cli --sql "SELECT version()"
+gaussdb cli --sql "SELECT version()"
 
 # 从文件执行 SQL
-gaussdb-mcp cli --file query.sql
+gaussdb cli --file query.sql
 
 # 通过管道输入 SQL
-echo "SELECT count(*) FROM users" | gaussdb-mcp cli
+echo "SELECT count(*) FROM users" | gaussdb cli
 ```
 
 ## 使用模式
@@ -67,9 +80,9 @@ echo "SELECT count(*) FROM users" | gaussdb-mcp cli
 ### 模式一：MCP 服务器（默认）
 
 ```sh
-gaussdb-mcp                    # 默认: MCP 模式，stdio 传输
-gaussdb-mcp mcp                 # 显式指定 MCP 模式
-gaussdb-mcp mcp --config ./prod.toml  # 使用自定义配置
+gaussdb                    # 默认: MCP 模式，stdio 传输
+gaussdb mcp                 # 显式指定 MCP 模式
+gaussdb mcp --config ./prod.toml  # 使用自定义配置
 ```
 
 与 AI 助手集成（参见[与 AI 助手集成](#与-ai-助手集成)）。
@@ -77,44 +90,117 @@ gaussdb-mcp mcp --config ./prod.toml  # 使用自定义配置
 ### 模式二：CLI 模式
 
 ```sh
-gaussdb-mcp cli [OPTIONS]
+gaussdb cli [OPTIONS]
 
 OPTIONS:
     -s, --sql <SQL>             SQL 语句
     -f, --file <FILE>           从文件读取 SQL
+    -i, --interactive           进入交互式 REPL 模式（见下方模式三）
         --check-connection      测试连接而不执行 SQL
     -v, --verbose               显示详细连接信息（配合 --check-connection）
         --name <NAME>           目标连接名称
         --config <PATH>         配置文件路径
         --format <FMT>          输出格式: table, json, vertical, csv [默认: table]
         --statement-timeout     覆盖配置中的语句超时时间
+        --no-history            不读写持久化的 SQL 历史记录（交互模式）
 ```
 
 **示例：**
 
 ```sh
 # 表格输出（默认）
-gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 5"
+gaussdb cli --sql "SELECT * FROM users LIMIT 5"
 
 # JSON 输出
-gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 5" --format json
+gaussdb cli --sql "SELECT * FROM users LIMIT 5" --format json
 
 # 垂直显示（类似 psql 的 \x）
-gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 5" --format vertical
+gaussdb cli --sql "SELECT * FROM users LIMIT 5" --format vertical
 
 # CSV 导出（RFC 4180，流式输出到 stdout；重定向到文件即可保存）
-gaussdb-mcp cli --sql "SELECT * FROM users" --format csv > users.csv
+gaussdb cli --sql "SELECT * FROM users" --format csv > users.csv
 
 # 支持 DML/DDL 语句
-gaussdb-mcp cli --sql "INSERT INTO logs VALUES (1, 'hello')"
-gaussdb-mcp cli --sql "CREATE TABLE test (id int)"
+gaussdb cli --sql "INSERT INTO logs VALUES (1, 'hello')"
+gaussdb cli --sql "CREATE TABLE test (id int)"
 
 # 指定连接
-gaussdb-mcp cli --name prod --sql "SELECT count(*) FROM orders"
+gaussdb cli --name prod --sql "SELECT count(*) FROM orders"
 
 # 检查指定连接的连通性
-gaussdb-mcp cli --check-connection --name prod
+gaussdb cli --check-connection --name prod
 ```
+
+### 模式三：交互式 REPL
+
+```sh
+gaussdb cli -i                  # 使用默认连接进入交互式 REPL
+gaussdb cli --interactive        # 同上，完整写法
+gaussdb cli -i --name prod       # 指定命名连接
+gaussdb cli -i --format json     # 默认输出格式 (table/json/vertical/csv)
+```
+
+进入类似 readline 的 SQL Shell：
+
+```
+gaussdb interactive — connected to 'dev'
+  host 127.0.0.1:5432  user gaussdb  database postgres
+end SQL with ';' + Enter to execute (multi-line ok) · .help · .connect · .exit
+$ SELECT 1,
+> 2,
+> 3;
+┌──────────┬──────────┬──────────┐
+│ ?column? │ ?column? │ ?column? │
+├──────────┼──────────┼──────────┤
+│ 1        │ 2        │ 3        │
+└──────────┴──────────┴──────────┘
+(1 row)
+$
+```
+
+**快捷键**（基于 crossterm 原始模式）：
+
+| 按键 | 功能 |
+|------|------|
+| `Enter` | 提交当前行（遇到 `;` 时执行） |
+| `↑` / `↓` 或 `Ctrl-P` / `Ctrl-N` | 浏览历史 |
+| `←` / `→` 或 `Ctrl-B` / `Ctrl-F` | 移动光标 |
+| `Home` / `End` 或 `Ctrl-A` / `Ctrl-E` | 跳转到行首/行尾 |
+| `Ctrl-U` / `Ctrl-K` | 删除到行首/行尾 |
+| `Ctrl-L` | 清屏 |
+| `Ctrl-C` | 取消当前输入（保留在 REPL 中） |
+| `Ctrl-D` | 空行时退出 / 非空行时删除字符 |
+| `Backspace` / `Delete` | 删除前一个/当前字符 |
+
+**点命令**（必须在命令行的开头输入）：
+
+| 命令 | 功能 |
+|------|------|
+| `.help` 或 `?` | 显示帮助 |
+| `.exit` / `.quit` | 退出 REPL |
+| `.connect [<name>]` | 断连后重连，或切换到连接 `<name>`（省略参数为当前连接） |
+| `.history` | 显示当前会话的 SQL 执行历史 |
+| `.clear` / `.cls` | 清屏 |
+| `.output <file>` | 将所有后续 SQL 输出重定向到文件（追加模式） |
+| `.output` | 将 SQL 输出恢复到 stdout |
+| `.save <file> [format]` | 将最近一次查询结果单独保存到文件（覆盖；format 可选，默认与 `--format` 一致） |
+
+```sh
+# 在 REPL 中：
+$ .output session.log      # 所有查询追加到 session.log
+$ SELECT * FROM users;
+$ .output                  # 恢复到 stdout
+$ .save users.csv csv      # 将最近一次结果导出为 CSV
+$ .exit
+```
+
+说明：
+- 仅当遇到语句外（引号/注释外）的 `;` 时执行 SQL（支持 `'...'`、`"..."`、`--`、`/* ... */`）
+- SQL 错误会输出到 stderr，REPL 继续运行
+- 如果服务器或防火墙断开空闲连接，下次语句将失败，REPL 会提示运行 `.connect`。`.connect`（无参数）重建当前连接；`.connect <name>` 切换到其他已配置连接，无需重启
+- 连续相同的语句会被历史去重
+- SQL 历史按连接名持久化存储在应用数据目录下（Linux: `$XDG_DATA_HOME/gaussdb/history/<name>`，macOS: `~/Library/Application Support/gaussdb/history/<name>`）；`↑`/`↓` 可访问之前会话的历史。使用 `--no-history` 可禁用。历史以明文存储，避免在语句中嵌入密码等敏感信息，或使用 `--no-history`
+- 超大导出建议使用一次性 `cli --format csv` 而非 REPL，因为 REPL 会缓冲结果以支持 `.save`
 
 ## 配置
 
@@ -138,7 +224,7 @@ host = "127.0.0.1"
 port = 5432
 user = "gaussdb"
 password = "secret"
-dbname = "devdb"
+dbname = "postgres"
 
 [connections.prod]
 host = "192.168.1.10"
@@ -162,7 +248,7 @@ url = "host=10.0.0.5 user=admin password=keyring dbname=staging sslmode=require"
 ## CLI 选项
 
 ```
-gaussdb-mcp [OPTIONS] [COMMAND]
+gaussdb [OPTIONS] [COMMAND]
 
 COMMANDS:
     mcp             作为 MCP 服务器运行（默认，无子命令时）
@@ -186,28 +272,30 @@ STORE-PASSWORD:
 CLI:
     -s, --sql <SQL>            要执行的 SQL 语句
     -f, --file <FILE>          从文件读取 SQL (或管道传入 stdin)
+    -i, --interactive          进入交互式 REPL 模式
         --check-connection     测试连接而不执行 SQL
     -v, --verbose              显示详细连接信息（配合 --check-connection）
         --format <FMT>         输出格式: table, json, vertical, csv [默认: table]
         --statement-timeout    覆盖配置中的语句超时 (如 "30s")
         --connection-max-lifetime  连接回收间隔 (如 "10min")
         --timeout-action       "cancel" (默认) 或 "disconnect"
+        --no-history           不读写持久化的 SQL 历史记录（交互模式）
 ```
 
 ### 连接诊断
 
 ```sh
 # 检查默认连接 (三阶段: NoTls → TLS-skip → TLS-verify)
-gaussdb-mcp check
+gaussdb check
 
 # 检查特定命名连接
-gaussdb-mcp check --name prod --config ~/.gaussdb.toml
+gaussdb check --name prod --config ~/.gaussdb.toml
 
 # 详细输出 (版本、GUC 参数、TLS 证书详情、耗时)
-gaussdb-mcp check --verbose
+gaussdb check --verbose
 
 # 也可以通过 cli 子命令使用
-gaussdb-mcp cli --check-connection --name prod -v
+gaussdb cli --check-connection --name prod -v
 ```
 
 诊断工具会：
@@ -221,13 +309,13 @@ gaussdb-mcp cli --check-connection --name prod -v
 
 ```sh
 # 为第一个/默认连接存储密码（交互式提示输入）
-gaussdb-mcp store-password --config ~/.gaussdb.toml
+gaussdb store-password --config ~/.gaussdb.toml
 
 # 为命名连接存储密码
-gaussdb-mcp store-password --name prod --config ~/.gaussdb.toml
+gaussdb store-password --name prod --config ~/.gaussdb.toml
 
 # 非交互模式（从 stdin 管道读取，适用于 CI/脚本）：
-#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name prod --config ~/.gaussdb.toml
+#   printf '%s\n' "$PW" | gaussdb store-password --name prod --config ~/.gaussdb.toml
 
 # 首次成功 MCP 连接时，配置文件中的明文密码会自动迁移
 # 至操作系统密钥链，配置文件更新为 password = "keyring"
@@ -306,6 +394,66 @@ gaussdb-mcp store-password --name prod --config ~/.gaussdb.toml
 
 ## 与 AI 助手集成
 
+### OpenCode
+
+在 `opencode.json` 中添加：
+
+```json
+{
+  "mcp": {
+    "gaussdb": {
+      "command": "/path/to/gaussdb",
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
+    }
+  }
+}
+```
+
+或通过环境变量：
+
+```json
+{
+  "mcp": {
+    "gaussdb": {
+      "command": "/path/to/gaussdb",
+      "env": {
+        "GAUSSDB_URL": "host=127.0.0.1 user=gaussdb password=secret dbname=postgres"
+      }
+    }
+  }
+}
+```
+
+### OpenClaw
+
+在 `~/.openclaw/mcp.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "gaussdb": {
+      "command": "/path/to/gaussdb",
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
+    }
+  }
+}
+```
+
+### 通义灵码（VSCode / IDEA）
+
+在项目根目录的 `.lingma/mcp.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "gaussdb": {
+      "command": "/path/to/gaussdb",
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
+    }
+  }
+}
+```
+
 ### Claude Desktop
 
 在 `claude_desktop_config.json` 中添加：
@@ -314,10 +462,8 @@ gaussdb-mcp store-password --name prod --config ~/.gaussdb.toml
 {
   "mcpServers": {
     "gaussdb": {
-      "command": "/path/to/gaussdb-mcp",
-      "env": {
-        "GAUSSDB_URL": "host=127.0.0.1 user=gaussdb password=secret dbname=postgres"
-      }
+      "command": "/path/to/gaussdb",
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
     }
   }
 }
@@ -331,22 +477,7 @@ gaussdb-mcp store-password --name prod --config ~/.gaussdb.toml
 {
   "mcpServers": {
     "gaussdb": {
-      "command": "/path/to/gaussdb-mcp",
-      "env": {
-        "GAUSSDB_URL": "host=127.0.0.1 user=gaussdb password=secret dbname=postgres"
-      }
-    }
-  }
-}
-```
-
-### 多连接设置
-
-```json
-{
-  "mcpServers": {
-    "gaussdb": {
-      "command": "/path/to/gaussdb-mcp",
+      "command": "/path/to/gaussdb",
       "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
     }
   }
@@ -355,7 +486,7 @@ gaussdb-mcp store-password --name prod --config ~/.gaussdb.toml
 
 ## 语句超时与连接生命周期
 
-`gaussdb-mcp` 支持可配置的 SQL 执行超时，防止失控查询阻塞 AI 助手会话。对 MCP 服务端和 CLI 均生效。
+`gaussdb` 支持可配置的 SQL 执行超时，防止失控查询阻塞 AI 助手会话。对 MCP 服务端和 CLI 均生效。
 
 ### 配置（TOML）
 
@@ -387,13 +518,13 @@ timeout_action = "cancel"
 
 ```sh
 # 为单次 CLI 调用覆盖语句超时
-gaussdb-mcp cli --sql "SELECT pg_sleep(60)" --statement-timeout 5s
+gaussdb cli --sql "SELECT pg_sleep(60)" --statement-timeout 5s
 
 # 超时后强制断开连接（下次调用时重建连接）
-gaussdb-mcp cli --sql "..." --statement-timeout 30s --timeout-action disconnect
+gaussdb cli --sql "..." --statement-timeout 30s --timeout-action disconnect
 
 # 设置连接最大生命周期
-gaussdb-mcp cli --sql "..." --connection-max-lifetime 10min
+gaussdb cli --sql "..." --connection-max-lifetime 10min
 ```
 
 ### MCP 工具单次调用覆盖
@@ -459,7 +590,7 @@ GAUSSDB_URL="host=db.example.com user=gaussdb dbname=postgres sslmode=verify-ful
 通过 `RUST_LOG` 控制日志级别：
 
 ```sh
-RUST_LOG=gaussdb_mcp=debug gaussdb-mcp
+RUST_LOG=gaussdb_mcp=debug gaussdb
 ```
 
 ## 项目结构

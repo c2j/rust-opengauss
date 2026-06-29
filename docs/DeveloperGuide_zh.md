@@ -102,7 +102,7 @@ use gaussdb::{Config, NoTls};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 解析连接字符串
-    let config: Config = "host=localhost user=postgres password=secret dbname=mydb"
+    let config: Config = "host=localhost user=gaussdb password=secret dbname=postgres"
         .parse()?;
 
     // 连接
@@ -144,7 +144,7 @@ use gaussdb::sync::{Client, NoTls};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = Client::connect(
-        "host=localhost user=postgres password=secret dbname=mydb",
+        "host=localhost user=gaussdb password=secret dbname=postgres",
         NoTls,
     )?;
 
@@ -226,7 +226,7 @@ use tokio_opengauss::{Config, NoTls};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 解析连接字符串
-    let config: Config = "host=localhost user=postgres password=secret dbname=mydb"
+    let config: Config = "host=localhost user=gaussdb password=secret dbname=postgres"
         .parse()?;
 
     // 连接
@@ -330,7 +330,7 @@ use gaussdb::sync::{Client, NoTls};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = Client::connect(
-        "host=localhost user=postgres password=secret dbname=mydb",
+        "host=localhost user=gaussdb password=secret dbname=postgres",
         NoTls,
     )?;
 
@@ -630,7 +630,7 @@ gaussdb = { version = "0.1.0", features = ["sync"] }
 连接参数遵循 libpq 惯例：
 
 ```
-host=localhost port=5432 user=postgres password=secret dbname=mydb
+host=localhost port=5432 user=gaussdb password=secret dbname=postgres
 host=db.example.com user=admin password=secret dbname=production sslmode=require
 ```
 
