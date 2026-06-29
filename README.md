@@ -1,6 +1,6 @@
-# gaussdb-mcp
+# gaussdb
 
-A standalone MCP (Model Context Protocol) server for [openGauss](https://opengauss.org/) database introspection, plus a built-in CLI for direct SQL execution. Designed for use with AI assistants like Claude, Cursor, and other MCP-compatible tools.
+A standalone MCP (Model Context Protocol) server for [openGauss](https://opengauss.org/) database introspection, plus a built-in CLI for direct SQL execution. Designed for use with AI assistants like OpenCode, OpenClaw, Lingma (VSCode/IDEA), Claude, Cursor, and other MCP-compatible tools.
 
 Built on the openGauss/PostgreSQL wire protocol (v3.0+) with **zero FFI dependencies** — no libpq, no C libraries.
 
@@ -22,19 +22,31 @@ Built on the openGauss/PostgreSQL wire protocol (v3.0+) with **zero FFI dependen
 
 ### Install
 
+**Download pre-built binary (recommended):**
+
+Download the latest zip for your platform from [GitHub Releases](https://github.com/c2j/rust-opengauss/releases), unzip, and place `gaussdb` in your PATH.
+
+```sh
+unzip gaussdb-*.zip
+sudo mv gaussdb /usr/local/bin/       # or ~/.local/bin/
+gaussdb --help
+```
+
+**Build from source:**
+
 ```sh
 # Build from source (Rust 1.85+ required)
 cargo build -p gaussdb-mcp --release
 
-# Binary available as both `gaussdb` and `gaussdb-mcp`
-./target/release/gaussdb-mcp --help
+# Binary available as `gaussdb`
+./target/release/gaussdb --help
 ```
 
 ### Connect via environment variable
 
 ```sh
 export GAUSSDB_URL="host=127.0.0.1 user=gaussdb password=secret dbname=postgres"
-gaussdb-mcp
+gaussdb
 ```
 
 ### Use a config file
@@ -47,20 +59,20 @@ user = "gaussdb"
 password = "secret"
 dbname = "postgres"
 EOF
-gaussdb-mcp
+gaussdb
 ```
 
 ### Quick CLI query
 
 ```sh
 # Execute a SELECT
-gaussdb-mcp cli --sql "SELECT version()"
+gaussdb cli --sql "SELECT version()"
 
 # Execute from file
-gaussdb-mcp cli --file query.sql
+gaussdb cli --file query.sql
 
 # Pipe SQL via stdin
-echo "SELECT count(*) FROM users" | gaussdb-mcp cli
+echo "SELECT count(*) FROM users" | gaussdb cli
 ```
 
 ## Usage Modes
@@ -68,9 +80,9 @@ echo "SELECT count(*) FROM users" | gaussdb-mcp cli
 ### Mode 1: MCP Server (default)
 
 ```sh
-gaussdb-mcp                    # default: MCP mode, stdio transport
-gaussdb-mcp mcp                 # explicit MCP mode
-gaussdb-mcp mcp --config ./prod.toml  # with custom config
+gaussdb                    # default: MCP mode, stdio transport
+gaussdb mcp                 # explicit MCP mode
+gaussdb mcp --config ./prod.toml  # with custom config
 ```
 
 Integrate with AI assistants (see [Integration](#integration-with-ai-assistants)).
@@ -78,7 +90,7 @@ Integrate with AI assistants (see [Integration](#integration-with-ai-assistants)
 ### Mode 2: CLI Mode
 
 ```sh
-gaussdb-mcp cli [OPTIONS]
+gaussdb cli [OPTIONS]
 
 OPTIONS:
     -s, --sql <SQL>             SQL statement to execute
@@ -97,48 +109,48 @@ OPTIONS:
 
 ```sh
 # Table output (default)
-gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 5"
+gaussdb cli --sql "SELECT * FROM users LIMIT 5"
 
 # JSON output
-gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 5" --format json
+gaussdb cli --sql "SELECT * FROM users LIMIT 5" --format json
 
 # Vertical display (like \x in psql)
-gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 5" --format vertical
+gaussdb cli --sql "SELECT * FROM users LIMIT 5" --format vertical
 
 # CSV export (RFC 4180, streaming to stdout; redirect to a file to save)
-gaussdb-mcp cli --sql "SELECT * FROM users" --format csv > users.csv
+gaussdb cli --sql "SELECT * FROM users" --format csv > users.csv
 
 # Large export tip: cast NUMERIC columns to text server-side to skip
 # client-side decimal decoding and minimise CPU cost on multi-million-row
 # exports. Server-side rendering is what psql / pg_dump effectively do.
-gaussdb-mcp cli --sql "SELECT id, amount::text, created_at::text FROM big_table" \
+gaussdb cli --sql "SELECT id, amount::text, created_at::text FROM big_table" \
   --format csv > big_table.csv
 
 # DML/DDL supported
-gaussdb-mcp cli --sql "INSERT INTO logs VALUES (1, 'hello')"
-gaussdb-mcp cli --sql "CREATE TABLE test (id int)"
+gaussdb cli --sql "INSERT INTO logs VALUES (1, 'hello')"
+gaussdb cli --sql "CREATE TABLE test (id int)"
 
 # Target a specific connection
-gaussdb-mcp cli --name prod --sql "SELECT count(*) FROM orders"
+gaussdb cli --name prod --sql "SELECT count(*) FROM orders"
 
 # Check connectivity for a specific connection
-gaussdb-mcp cli --check-connection --name prod
+gaussdb cli --check-connection --name prod
 ```
 
 ### Mode 3: Interactive REPL
 
 ```sh
-gaussdb-mcp cli -i                  # interactive REPL with default connection
-gaussdb-mcp cli --interactive        # same, long form
-gaussdb-mcp cli -i --name prod       # target a specific named connection
-gaussdb-mcp cli -i --format json     # default format for results (table/json/vertical/csv)
+gaussdb cli -i                  # interactive REPL with default connection
+gaussdb cli --interactive        # same, long form
+gaussdb cli -i --name prod       # target a specific named connection
+gaussdb cli -i --format json     # default format for results (table/json/vertical/csv)
 ```
 
 Drops you into a readline-style SQL shell:
 
 ```
-gaussdb-mcp interactive — connected to 'dev'
-  host 127.0.0.1:5432  user postgres  database devdb
+gaussdb interactive — connected to 'dev'
+  host 127.0.0.1:5432  user gaussdb  database postgres
 end SQL with ';' + Enter to execute (multi-line ok) · .help · .connect · .exit
 $ SELECT 1,
 > 2,
@@ -218,7 +230,7 @@ host = "127.0.0.1"
 port = 5432
 user = "gaussdb"
 password = "secret"
-dbname = "devdb"
+dbname = "postgres"
 
 [connections.prod]
 host = "192.168.1.10"
@@ -242,7 +254,7 @@ Each connection's password can be:
 ## CLI Options
 
 ```
-gaussdb-mcp [OPTIONS] [COMMAND]
+gaussdb [OPTIONS] [COMMAND]
 
 COMMANDS:
     mcp             Run as MCP server (default when no subcommand given)
@@ -279,16 +291,16 @@ CLI:
 
 ```sh
 # Check the default connection (3-pass: NoTls → TLS-skip → TLS-verify)
-gaussdb-mcp check
+gaussdb check
 
 # Check a specific named connection
-gaussdb-mcp check --name prod --config ~/.gaussdb.toml
+gaussdb check --name prod --config ~/.gaussdb.toml
 
 # Verbose output (version, GUC params, TLS cert details, timing)
-gaussdb-mcp check --verbose
+gaussdb check --verbose
 
 # Also available via the cli subcommand
-gaussdb-mcp cli --check-connection --name prod -v
+gaussdb cli --check-connection --name prod -v
 ```
 
 The diagnostic tool:
@@ -302,13 +314,13 @@ The diagnostic tool:
 
 ```sh
 # Store password for the first/default connection (interactive prompt)
-gaussdb-mcp store-password --config ~/.gaussdb.toml
+gaussdb store-password --config ~/.gaussdb.toml
 
 # Store password for a named connection
-gaussdb-mcp store-password --name prod --config ~/.gaussdb.toml
+gaussdb store-password --name prod --config ~/.gaussdb.toml
 
 # Non-interactive (read from stdin pipe, e.g. CI/scripts):
-#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name prod --config ~/.gaussdb.toml
+#   printf '%s\n' "$PW" | gaussdb store-password --name prod --config ~/.gaussdb.toml
 
 # On first successful MCP connection with plaintext config password,
 # auto-migration moves it to OS keychain and updates config to `password = "keyring"`
@@ -387,6 +399,66 @@ When a database error occurs, MCP tools return structured error data:
 
 ## Integration with AI Assistants
 
+### OpenCode
+
+Add to `opencode.json`:
+
+```json
+{
+  "mcp": {
+    "gaussdb": {
+      "command": "/path/to/gaussdb",
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
+    }
+  }
+}
+```
+
+Or via environment variable:
+
+```json
+{
+  "mcp": {
+    "gaussdb": {
+      "command": "/path/to/gaussdb",
+      "env": {
+        "GAUSSDB_URL": "host=127.0.0.1 user=gaussdb password=secret dbname=postgres"
+      }
+    }
+  }
+}
+```
+
+### OpenClaw
+
+Add to `~/.openclaw/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "gaussdb": {
+      "command": "/path/to/gaussdb",
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
+    }
+  }
+}
+```
+
+### Lingma (VSCode / IDEA)
+
+Add to `.lingma/mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "gaussdb": {
+      "command": "/path/to/gaussdb",
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
+    }
+  }
+}
+```
+
 ### Claude Desktop
 
 Add to `claude_desktop_config.json`:
@@ -395,10 +467,8 @@ Add to `claude_desktop_config.json`:
 {
   "mcpServers": {
     "gaussdb": {
-      "command": "/path/to/gaussdb-mcp",
-      "env": {
-        "GAUSSDB_URL": "host=127.0.0.1 user=gaussdb password=secret dbname=postgres"
-      }
+      "command": "/path/to/gaussdb",
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
     }
   }
 }
@@ -412,22 +482,7 @@ Add to `.cursor/mcp.json`:
 {
   "mcpServers": {
     "gaussdb": {
-      "command": "/path/to/gaussdb-mcp",
-      "env": {
-        "GAUSSDB_URL": "host=127.0.0.1 user=gaussdb password=secret dbname=postgres"
-      }
-    }
-  }
-}
-```
-
-### Multi-connection setup
-
-```json
-{
-  "mcpServers": {
-    "gaussdb": {
-      "command": "/path/to/gaussdb-mcp",
+      "command": "/path/to/gaussdb",
       "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
     }
   }
@@ -436,7 +491,7 @@ Add to `.cursor/mcp.json`:
 
 ## Statement Timeout & Connection Lifetime
 
-`gaussdb-mcp` supports configurable SQL execution timeouts to prevent runaway queries from blocking AI assistant sessions. Applies to both MCP server and CLI.
+`gaussdb` supports configurable SQL execution timeouts to prevent runaway queries from blocking AI assistant sessions. Applies to both MCP server and CLI.
 
 ### Configuration (TOML)
 
@@ -468,13 +523,13 @@ Accepted duration formats: bare integers (seconds), or with suffix: `500ms`, `30
 
 ```sh
 # Override statement timeout for a single CLI invocation
-gaussdb-mcp cli --sql "SELECT pg_sleep(60)" --statement-timeout 5s
+gaussdb cli --sql "SELECT pg_sleep(60)" --statement-timeout 5s
 
 # Force disconnect on timeout (connection recycled on next call)
-gaussdb-mcp cli --sql "..." --statement-timeout 30s --timeout-action disconnect
+gaussdb cli --sql "..." --statement-timeout 30s --timeout-action disconnect
 
 # Set connection max lifetime
-gaussdb-mcp cli --sql "..." --connection-max-lifetime 10min
+gaussdb cli --sql "..." --connection-max-lifetime 10min
 ```
 
 ### MCP Tool Per-Call Override
@@ -540,7 +595,7 @@ Logs are written to `$XDG_DATA_HOME/gaussdb/gaussdb.log` (or `~/.local/share/gau
 Set `RUST_LOG` for log level control:
 
 ```sh
-RUST_LOG=gaussdb_mcp=debug gaussdb-mcp
+RUST_LOG=gaussdb_mcp=debug gaussdb
 ```
 
 ## Project Structure

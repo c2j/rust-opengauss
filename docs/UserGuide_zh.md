@@ -1,6 +1,6 @@
-# GaussDB-MCP 用户手册
+# GaussDB 用户手册
 
-面向 `gaussdb-mcp` 终端用户的完整指南 — openGauss/PostgreSQL 数据库的 MCP 服务器和 CLI 工具。
+面向 `gaussdb` 终端用户的完整指南 — openGauss/PostgreSQL 数据库的 MCP 服务器和 CLI 工具。
 
 ## 目录
 
@@ -8,6 +8,7 @@
 - [配置](#配置)
 - [MCP 模式（AI 助手集成）](#mcp-模式ai-助手集成)
 - [CLI 模式（直接执行 SQL）](#cli-模式直接执行-sql)
+  - [交互式 REPL](#交互式-repl)
 - [连接诊断](#连接诊断)
 - [密码管理](#密码管理)
 - [TLS / SSL 配置](#tls--ssl-配置)
@@ -20,8 +21,27 @@
 
 ### 前置条件
 
-- **Rust** 1.85+（通过 [rustup](https://rustup.rs/) 安装）
 - 一个 openGauss 或 PostgreSQL 服务器（9.5+ 版本）
+- 如从源码构建：**Rust** 1.85+（通过 [rustup](https://rustup.rs/) 安装）
+
+### 下载预编译版本（推荐）
+
+1. 从 [GitHub Releases](https://github.com/c2j/rust-opengauss/releases) 下载对应平台的 zip 包
+2. 解压：
+   ```sh
+   unzip gaussdb-*.zip
+   ```
+3. 将二进制文件放入 PATH：
+   ```sh
+   # macOS / Linux
+   sudo mv gaussdb /usr/local/bin/
+   # 或放到用户目录（无需 sudo）
+   mkdir -p ~/.local/bin && mv gaussdb ~/.local/bin/
+   ```
+4. 验证安装：
+   ```sh
+   gaussdb --help
+   ```
 
 ### 从源码构建
 
@@ -31,25 +51,25 @@ cd rust-opengauss
 cargo build -p gaussdb-mcp --release
 ```
 
-编译后的二进制文件位于 `target/release/gaussdb-mcp`（也可使用 `gaussdb` 名称）。
+编译后的二进制文件位于 `target/release/gaussdb`。
 
 ### 验证安装
 
 ```sh
-gaussdb-mcp --help
+gaussdb --help
 ```
 
 ---
 
 ## 配置
 
-`gaussdb-mcp` 支持三种配置方式（按优先级排列）：
+`gaussdb` 支持三种配置方式（按优先级排列）：
 
 ### 1. 环境变量
 
 ```sh
-export GAUSSDB_URL="host=127.0.0.1 user=myuser password=mypass dbname=mydb"
-export DATABASE_URL="host=127.0.0.1 user=myuser password=mypass dbname=mydb"  # 同样有效
+export GAUSSDB_URL="host=127.0.0.1 user=gaussdb password=secret dbname=postgres"
+export DATABASE_URL="host=127.0.0.1 user=gaussdb password=secret dbname=postgres"  # 同样有效
 ```
 
 `GAUSSDB_URL` 和 `DATABASE_URL` 均被接受，`GAUSSDB_URL` 优先。
@@ -63,9 +83,9 @@ export DATABASE_URL="host=127.0.0.1 user=myuser password=mypass dbname=mydb"  # 
 ```toml
 host = "127.0.0.1"
 port = 5432
-user = "myuser"
-password = "mypass"
-dbname = "mydb"
+user = "gaussdb"
+password = "secret"
+dbname = "postgres"
 ```
 
 **多连接：**
@@ -76,9 +96,9 @@ default_connection = "development"
 [connections.development]
 host = "127.0.0.1"
 port = 5432
-user = "dev"
-password = "devpass"
-dbname = "devdb"
+user = "gaussdb"
+password = "secret"
+dbname = "postgres"
 
 [connections.production]
 host = "db-prod.example.com"
@@ -92,8 +112,8 @@ sslmode = "require"
 ### 3. 自定义配置路径
 
 ```sh
-gaussdb-mcp mcp --config /path/to/config.toml
-gaussdb-mcp cli --config /path/to/config.toml --sql "SELECT 1"
+gaussdb mcp --config /path/to/config.toml
+gaussdb cli --config /path/to/config.toml --sql "SELECT 1"
 ```
 
 ### 连接 URL 格式
@@ -102,14 +122,14 @@ gaussdb-mcp cli --config /path/to/config.toml --sql "SELECT 1"
 
 ```toml
 # URL 格式（一体化）
-url = "host=10.0.0.5 port=5432 user=admin password=secret dbname=mydb sslmode=require"
+url = "host=10.0.0.5 port=5432 user=admin password=secret dbname=postgres sslmode=require"
 
 # 字段格式（分别指定）
 host = "10.0.0.5"
 port = 5432
 user = "admin"
 password = "secret"
-dbname = "mydb"
+dbname = "postgres"
 sslmode = "require"
 ```
 
@@ -121,19 +141,19 @@ sslmode = "require"
 
 ### 概述
 
-MCP 模式允许 AI 助手（Claude、Cursor 等）通过标准化的 MCP 协议查询您的 openGauss/PostgreSQL 数据库。服务器通过 stdio 运行 — 无需网络端口。
+MCP 模式允许 AI 助手（OpenCode、OpenClaw、通义灵码、Claude、Cursor 等）通过标准化的 MCP 协议查询您的 openGauss/PostgreSQL 数据库。服务器通过 stdio 运行 — 无需网络端口。
 
 ### 启动服务器
 
 ```sh
 # 启动 MCP 服务器（默认模式）
-gaussdb-mcp
+gaussdb
 
 # 显式指定 MCP 模式
-gaussdb-mcp mcp
+gaussdb mcp
 
 # 使用自定义配置
-gaussdb-mcp mcp --config ~/my-gaussdb-config.toml
+gaussdb mcp --config ~/my-gaussdb-config.toml
 ```
 
 服务器启动后等待 MCP 客户端通过 stdin/stdout 连接。
@@ -151,6 +171,54 @@ gaussdb-mcp mcp --config ~/my-gaussdb-config.toml
 
 ### 集成示例
 
+#### OpenCode
+
+1. 打开 OpenCode 设置（`opencode.json`）
+2. 添加以下配置：
+
+```json
+{
+  "mcp": {
+    "gaussdb": {
+      "command": "/path/to/target/release/gaussdb",
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
+    }
+  }
+}
+```
+
+3. 重启 OpenCode 后即可在 MCP 工具列表中看到 gaussdb 工具
+
+#### OpenClaw
+
+在 `~/.openclaw/mcp.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "gaussdb": {
+      "command": "/path/to/target/release/gaussdb",
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
+    }
+  }
+}
+```
+
+#### 通义灵码（VSCode / IDEA）
+
+在项目根目录的 `.lingma/mcp.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "gaussdb": {
+      "command": "/path/to/target/release/gaussdb",
+      "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
+    }
+  }
+}
+```
+
 #### Claude Desktop
 
 1. 打开 Claude Desktop 设置
@@ -161,7 +229,7 @@ gaussdb-mcp mcp --config ~/my-gaussdb-config.toml
 {
   "mcpServers": {
     "gaussdb": {
-      "command": "/path/to/target/release/gaussdb-mcp",
+      "command": "/path/to/target/release/gaussdb",
       "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
     }
   }
@@ -179,7 +247,7 @@ gaussdb-mcp mcp --config ~/my-gaussdb-config.toml
 {
   "mcpServers": {
     "gaussdb": {
-      "command": "/path/to/target/release/gaussdb-mcp",
+      "command": "/path/to/target/release/gaussdb",
       "args": ["mcp", "--config", "/path/to/gaussdb.toml"]
     }
   }
@@ -232,14 +300,14 @@ CLI 模式提供类似 `psql` 的接口，可直接从终端执行 SQL。支持 
 
 ```sh
 # 执行单条查询
-gaussdb-mcp cli --sql "SELECT version()"
+gaussdb cli --sql "SELECT version()"
 
 # 从文件执行
-gaussdb-mcp cli --file ./queries/report.sql
+gaussdb cli --file ./queries/report.sql
 
 # 通过管道传入 SQL
-cat query.sql | gaussdb-mcp cli
-echo "SELECT * FROM users LIMIT 10" | gaussdb-mcp cli
+cat query.sql | gaussdb cli
+echo "SELECT * FROM users LIMIT 10" | gaussdb cli
 ```
 
 ### 输出格式
@@ -247,7 +315,7 @@ echo "SELECT * FROM users LIMIT 10" | gaussdb-mcp cli
 #### 表格（默认）
 
 ```sh
-gaussdb-mcp cli --sql "SELECT id, name, email FROM users LIMIT 3"
+gaussdb cli --sql "SELECT id, name, email FROM users LIMIT 3"
 ```
 ```
  id | name  | email
@@ -261,7 +329,7 @@ gaussdb-mcp cli --sql "SELECT id, name, email FROM users LIMIT 3"
 #### JSON
 
 ```sh
-gaussdb-mcp cli --sql "SELECT id, name FROM users LIMIT 2" --format json
+gaussdb cli --sql "SELECT id, name FROM users LIMIT 2" --format json
 ```
 ```json
 {
@@ -274,7 +342,7 @@ gaussdb-mcp cli --sql "SELECT id, name FROM users LIMIT 2" --format json
 #### 垂直格式
 
 ```sh
-gaussdb-mcp cli --sql "SELECT * FROM users LIMIT 1" --format vertical
+gaussdb cli --sql "SELECT * FROM users LIMIT 1" --format vertical
 ```
 ```
 -[ RECORD 1 ]-
@@ -290,17 +358,17 @@ email | alice@email.com
 
 ```sh
 # INSERT
-gaussdb-mcp cli --sql "INSERT INTO logs (message) VALUES ('服务器已启动')"
+gaussdb cli --sql "INSERT INTO logs (message) VALUES ('服务器已启动')"
 
 # UPDATE
-gaussdb-mcp cli --sql "UPDATE users SET active = true WHERE id = 1"
+gaussdb cli --sql "UPDATE users SET active = true WHERE id = 1"
 
 # DELETE
-gaussdb-mcp cli --sql "DELETE FROM sessions WHERE created_at < now() - interval '30 days'"
+gaussdb cli --sql "DELETE FROM sessions WHERE created_at < now() - interval '30 days'"
 
 # DDL
-gaussdb-mcp cli --sql "CREATE TABLE metrics (id serial PRIMARY KEY, value float)"
-gaussdb-mcp cli --sql "ALTER TABLE users ADD COLUMN last_login timestamptz"
+gaussdb cli --sql "CREATE TABLE metrics (id serial PRIMARY KEY, value float)"
+gaussdb cli --sql "ALTER TABLE users ADD COLUMN last_login timestamptz"
 ```
 
 对于非 SELECT 语句，输出显示受影响的行数。
@@ -309,10 +377,10 @@ gaussdb-mcp cli --sql "ALTER TABLE users ADD COLUMN last_login timestamptz"
 
 ```sh
 # 使用特定的命名连接
-gaussdb-mcp cli --connection production --sql "SELECT count(*) FROM orders"
+gaussdb cli --name production --sql "SELECT count(*) FROM orders"
 
 # 使用包含命名连接的自定义配置文件
-gaussdb-mcp cli --config ./prod-config.toml --connection staging --sql "SELECT version()"
+gaussdb cli --config ./prod-config.toml --name staging --sql "SELECT version()"
 ```
 
 ### 脚本集成
@@ -323,7 +391,7 @@ CLI 模式非常适合 Shell 脚本和自动化：
 #!/bin/bash
 # backup-verify.sh: 验证数据库备份
 
-ROW_COUNT=$(gaussdb-mcp cli --connection prod --format json \
+ROW_COUNT=$(gaussdb cli --name prod --format json \
     --sql "SELECT count(*) FROM important_table" | jq '.rows[0][0]')
 
 if [ "$ROW_COUNT" -gt 0 ]; then
@@ -336,14 +404,87 @@ fi
 
 ---
 
-## 连接诊断
-
-`--check-connection` 标志执行全面的连接测试：
+### 交互式 REPL
 
 ```sh
-gaussdb-mcp --check-connection
-gaussdb-mcp --check-connection --verbose
-gaussdb-mcp --check-connection production --config ~/prod-config.toml
+gaussdb cli -i                  # 使用默认连接进入交互式 REPL
+gaussdb cli --interactive        # 同上，完整写法
+gaussdb cli -i --name prod       # 指定命名连接
+gaussdb cli -i --format json     # 默认输出格式 (table/json/vertical/csv)
+```
+
+进入类 readline 的 SQL Shell：
+
+```
+gaussdb interactive — connected to 'dev'
+  host 127.0.0.1:5432  user gaussdb  database postgres
+end SQL with ';' + Enter to execute (multi-line ok) · .help · .connect · .exit
+$ SELECT 1,
+> 2,
+> 3;
+┌──────────┬──────────┬──────────┐
+│ ?column? │ ?column? │ ?column? │
+├──────────┼──────────┼──────────┤
+│ 1        │ 2        │ 3        │
+└──────────┴──────────┴──────────┘
+(1 row)
+$
+```
+
+**快捷键**（基于 crossterm 原始模式）：
+
+| 按键 | 功能 |
+|------|------|
+| `Enter` | 提交当前行（遇到 `;` 时执行） |
+| `↑` / `↓` 或 `Ctrl-P` / `Ctrl-N` | 浏览历史 |
+| `←` / `→` 或 `Ctrl-B` / `Ctrl-F` | 移动光标 |
+| `Home` / `End` 或 `Ctrl-A` / `Ctrl-E` | 跳转到行首/行尾 |
+| `Ctrl-U` / `Ctrl-K` | 删除到行首/行尾 |
+| `Ctrl-L` | 清屏 |
+| `Ctrl-C` | 取消当前输入（保留在 REPL 中） |
+| `Ctrl-D` | 空行时退出 / 非空行时删除字符 |
+| `Backspace` / `Delete` | 删除前一个/当前字符 |
+
+**点命令**（必须在命令行的开头输入）：
+
+| 命令 | 功能 |
+|------|------|
+| `.help` 或 `?` | 显示帮助 |
+| `.exit` / `.quit` | 退出 REPL |
+| `.connect [<name>]` | 断连后重连，或切换到连接 `<name>`（省略参数为当前连接） |
+| `.history` | 显示当前会话的 SQL 执行历史 |
+| `.clear` / `.cls` | 清屏 |
+| `.output <file>` | 将所有后续 SQL 输出重定向到文件（追加模式） |
+| `.output` | 将 SQL 输出恢复到 stdout |
+| `.save <file> [format]` | 将最近一次查询结果单独保存到文件（覆盖；format 可选，默认与 `--format` 一致） |
+
+```sh
+# 在 REPL 中：
+$ .output session.log      # 所有查询追加到 session.log
+$ SELECT * FROM users;
+$ .output                  # 恢复到 stdout
+$ .save users.csv csv      # 将最近一次结果导出为 CSV
+$ .exit
+```
+
+说明：
+- 仅当遇到语句外（引号/注释外）的 `;` 时执行 SQL（支持 `'...'`、`"..."`、`--`、`/* ... */`）
+- SQL 错误输出到 stderr，REPL 继续运行
+- 如果服务器或防火墙断开空闲连接，下次语句将失败，REPL 会提示运行 `.connect`
+- 连续相同的语句会被历史去重
+- SQL 历史按连接名持久化存储（Linux: `$XDG_DATA_HOME/gaussdb/history/<name>`，macOS: `~/Library/Application Support/gaussdb/history/<name>`）。使用 `--no-history` 可禁用
+- 超大导出建议使用一次性 `cli --format csv` 而非 REPL
+
+---
+
+## 连接诊断
+
+`check` 子命令执行全面的连接测试（也可通过 `cli --check-connection` 使用）：
+
+```sh
+gaussdb check
+gaussdb check --verbose
+gaussdb check --name production --config ~/prod-config.toml
 ```
 
 ### 测试内容
@@ -358,28 +499,28 @@ gaussdb-mcp --check-connection production --config ~/prod-config.toml
 ```
 连接: development
 
-[Keyring] 密码从操作系统密钥链读取 (用户: dev@127.0.0.1/devdb)
+[Keyring] 密码从操作系统密钥链读取 (用户: gaussdb@127.0.0.1/postgres)
   ✓ 密钥链可访问，密码已获取 (5 字符)
 
-[1/3] 尝试 NoTls (明文 TCP) → host=127.0.0.1 user=dev password=**** dbname=devdb ...
+[1/3] 尝试 NoTls (明文 TCP) → host=127.0.0.1 user=gaussdb password=**** dbname=postgres ...
   ✓ 已连接
-    PostgreSQL 17.0 on x86_64-pc-linux-gnu, compiled by gcc...
+    (openGauss-lite 7.0.0-RC1 build 10d38387) compiled at 2025-03-21 18:40:52 commit 0 last mr  release
 
-[2/3] 尝试 TLS (跳过证书验证) → host=127.0.0.1 user=dev ... sslmode=require ...
+[2/3] 尝试 TLS (跳过证书验证) → host=127.0.0.1 user=gaussdb ... sslmode=require ...
   ✗ TLS 握手失败: 服务器不支持 TLS
 
-[3/3] 尝试 TLS (验证证书) → host=127.0.0.1 user=dev ... sslmode=require ...
+[3/3] 尝试 TLS (验证证书) → host=127.0.0.1 user=gaussdb ... sslmode=require ...
   ✗ TLS 握手失败: 服务器不支持 TLS
 
 ═══════════════════════════════════════════════════════════
   连接诊断摘要
 ═══════════════════════════════════════════════════════════
-  NoTls                ✓  PostgreSQL 17.0... (15ms)
+  NoTls                ✓  (openGauss-lite 7.0.0-RC1...) (15ms)
   TLS (不验证)          ✗  服务器不支持 TLS
   TLS (验证)            ✗  服务器不支持 TLS
 
   数据库版本:
-    PostgreSQL 17.0 on x86_64-pc-linux-gnu...
+    (openGauss-lite 7.0.0-RC1 build 10d38387)...
 
 推荐：使用 NoTls 模式。
 ```
@@ -406,13 +547,13 @@ gaussdb-mcp --check-connection production --config ~/prod-config.toml
 
 ```sh
 # 为配置文件中的第一个连接存储密码（交互式提示输入）
-gaussdb-mcp store-password --config ~/.gaussdb.toml
+gaussdb store-password --config ~/.gaussdb.toml
 
 # 为命名连接存储密码
-gaussdb-mcp store-password --name production --config ~/.gaussdb.toml
+gaussdb store-password --name production --config ~/.gaussdb.toml
 
 # 非交互模式（从 stdin 管道读取，适用于 CI/脚本）：
-#   printf '%s\n' "$PW" | gaussdb-mcp store-password --name production --config ~/.gaussdb.toml
+#   printf '%s\n' "$PW" | gaussdb store-password --name production --config ~/.gaussdb.toml
 ```
 
 ### 工作原理
@@ -432,7 +573,7 @@ gaussdb-mcp store-password --name production --config ~/.gaussdb.toml
 password = "my-plaintext-password"
 ```
 
-在**首次成功的 MCP 连接**时，gaussdb-mcp 会：
+在**首次成功的 MCP 连接**时，gaussdb 会：
 1. 将密码存储到操作系统密钥链
 2. 将配置文件更新为 `password = "keyring"`
 3. 正常继续使用该连接
@@ -478,10 +619,10 @@ export GAUSSDB_URL="host=db.example.com user=admin password=secret dbname=secure
 
 ### 自动检测连接方式
 
-使用 `--check-connection` 自动确定服务器的正确 TLS 模式：
+使用 `check` 子命令自动确定服务器的正确 TLS 模式：
 
 ```sh
-gaussdb-mcp --check-connection
+gaussdb check
 ```
 
 该工具测试所有三种模式并推荐应使用哪种。
@@ -508,7 +649,7 @@ dbname = "postgres"
 EOF
 
 # 方式三：显式传递配置文件
-gaussdb-mcp --config /path/to/config.toml
+gaussdb --config /path/to/config.toml
 ```
 
 ### "数据库连接失败"
@@ -522,7 +663,7 @@ gaussdb-mcp --config /path/to/config.toml
 **诊断步骤：**
 ```sh
 # 运行连接诊断
-gaussdb-mcp --check-connection --verbose
+gaussdb check --verbose
 
 # 验证服务器是否可达
 psql -h localhost -U postgres -d postgres -c "SELECT 1"
@@ -537,7 +678,7 @@ psql -h localhost -U postgres -d postgres -c "SELECT 1"
 **解决方案：**
 ```sh
 # 存储密码（交互式提示输入）
-gaussdb-mcp store-password --config ~/.gaussdb.toml
+gaussdb store-password --config ~/.gaussdb.toml
 
 # 或临时使用明文（会自动迁移）
 # 编辑配置文件：将 password = "keyring" 改为 password = "YourPassword"
@@ -549,7 +690,7 @@ gaussdb-mcp store-password --config ~/.gaussdb.toml
 
 **解决方案：** 使用 CLI 模式执行 DML/DDL：
 ```sh
-gaussdb-mcp cli --sql "INSERT INTO ..."
+gaussdb cli --sql "INSERT INTO ..."
 ```
 
 ### 日志文件位置
@@ -560,7 +701,7 @@ gaussdb-mcp cli --sql "INSERT INTO ..."
 
 启用调试日志：
 ```sh
-RUST_LOG=gaussdb_mcp=debug gaussdb-mcp
+RUST_LOG=gaussdb_mcp=debug gaussdb
 ```
 
 ---
@@ -573,7 +714,7 @@ openGauss 和 PostgreSQL 9.5+。该工具使用标准的 PostgreSQL 线协议（
 
 ### 可以不使用 AI 助手吗？
 
-可以！使用 CLI 模式（`gaussdb-mcp cli`）从终端或脚本中直接执行 SQL。
+可以！使用 CLI 模式（`gaussdb cli`）从终端或脚本中直接执行 SQL。
 
 ### 可以配置多少个连接？
 
@@ -591,12 +732,12 @@ openGauss 和 PostgreSQL 9.5+。该工具使用标准的 PostgreSQL 线协议（
 可以。参见仓库中的 `docker-compose.yml` 获取 PostgreSQL 测试环境：
 ```sh
 docker compose up -d
-gaussdb-mcp cli --sql "SELECT version()"
+gaussdb cli --sql "SELECT version()"
 ```
 
 ### 这与 psql 有什么不同？
 
 - `psql` 是一个全功能的交互式终端
-- `gaussdb-mcp cli` 是一个非交互式 SQL 执行器，适合脚本使用
-- `gaussdb-mcp mcp` 是一个用于 AI 助手集成的 MCP 服务器
+- `gaussdb cli` 是一个 SQL 执行器，支持交互式 REPL（`cli -i`）和非交互式脚本模式
+- `gaussdb mcp` 是一个用于 AI 助手集成的 MCP 服务器
 - 两者均无需安装 libpq 即可操作 openGauss
