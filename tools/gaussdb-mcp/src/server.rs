@@ -393,6 +393,10 @@ pub struct ExecuteQueryParams {
     /// connection's global statement_timeout for this query only.
     #[serde(default)]
     pub timeout_ms: Option<u64>,
+    /// Maximum rows to return. Default 1000, capped at 10000.
+    /// Set to 0 or omit to use the default.
+    #[serde(default)]
+    pub max_rows: Option<usize>,
     #[serde(default)]
     pub connection_name: Option<String>,
 }
@@ -1076,26 +1080,47 @@ impl GaussdbMcp {
             )]));
         }
 
+        // Resolve effective max_rows: default 1000, capped at 10000.
+        let max_rows = params.max_rows.unwrap_or(1000).clamp(1, 10000);
+        let total_count = rows.len();
+        let truncated = total_count > max_rows;
+        let visible = if truncated {
+            &rows[..max_rows]
+        } else {
+            &rows[..]
+        };
+
         let columns: Vec<String> = rows[0]
             .columns()
             .iter()
             .map(|c| c.name().to_string())
             .collect();
 
-        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
-        for row in &rows {
-            let mut result_row: Vec<serde_json::Value> = Vec::new();
-            for idx in 0..row.len() {
-                result_row.push(output::format_row_value(row, idx));
+        // Hoist column types once, avoiding per-cell Type::clone + match dispatch.
+        let column_types: Vec<&gaussdb::types::Type> =
+            rows[0].columns().iter().map(|c| c.type_()).collect();
+
+        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::with_capacity(visible.len());
+        for row in visible {
+            let mut result_row: Vec<serde_json::Value> = Vec::with_capacity(column_types.len());
+            for (idx, ty) in column_types.iter().enumerate() {
+                result_row.push(output::format_value_with_type(row, idx, ty));
             }
             result_rows.push(result_row);
         }
 
-        let result = json!({
+        let mut result = json!({
             "columns": columns,
             "rows": result_rows,
-            "row_count": rows.len(),
+            "row_count": total_count,
         });
+        if truncated {
+            result["truncated"] = json!(true);
+            result["hint"] = json!(format!(
+                "Result exceeds max_rows ({max_rows}). Use `gaussdb cli --format csv > file.csv` for full export.",
+                max_rows = max_rows,
+            ));
+        }
 
         Ok(CallToolResult::success(vec![Content::text(
             result.to_string(),
@@ -1202,7 +1227,7 @@ impl GaussdbMcp {
 
 #[tool_handler(
     name = "gaussdb",
-    version = "0.5.3",
+    version = "0.5.4",
     instructions = "MCP server for openGauss database introspection with multi-connection support"
 )]
 impl ServerHandler for GaussdbMcp {}
