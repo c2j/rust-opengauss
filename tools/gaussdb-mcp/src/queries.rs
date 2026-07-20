@@ -1,6 +1,10 @@
 pub const DATABASE_INFO: &str = "
 SELECT
     version()::text AS version,
+    CASE WHEN version() ~ 'PolarDB'
+         THEN current_setting('polardb_version', true)
+         ELSE NULL
+    END AS polardb_version,
     pg_postmaster_start_time()::text AS start_time,
     current_database()::text AS database,
     current_user::text AS current_user,
@@ -27,7 +31,7 @@ SELECT
 FROM pg_catalog.pg_class c
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relkind IN ('r', 'v', 'm', 'f', 'p')
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'db4ai', 'dbe_pldebugger', 'dbe_pldeveloper', 'pkg_service', 'sqladvisor', 'blockchain', 'cstore', 'snapshot')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'db4ai', 'dbe_pldebugger', 'dbe_pldeveloper', 'pkg_service', 'sqladvisor', 'blockchain', 'cstore', 'snapshot', 'polar_feature_utils', 'polar_agent', 'polar_gtt')
 ORDER BY n.nspname, c.relname
 ";
 
