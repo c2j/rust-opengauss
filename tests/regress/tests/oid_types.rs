@@ -189,12 +189,12 @@ async fn all_oid_columns_in_pg_class() {
     let row = first_row(
         &client,
         "SELECT oid, relnamespace, relowner, reltype, relam, reltablespace,
-                reltoastrelid, reltoastidxid
+                reltoastrelid
          FROM pg_class WHERE relname = 'pg_type'",
     )
     .await;
 
-    for col_idx in 0..8 {
+    for col_idx in 0..7 {
         let v: u32 = row
             .try_get(col_idx)
             .unwrap_or_else(|_| panic!("pg_class column {col_idx} should be readable as u32"));
