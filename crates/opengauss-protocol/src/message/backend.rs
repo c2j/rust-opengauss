@@ -371,7 +371,7 @@ impl Message {
                     } else {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
-                            format!("unknown authentication tag `13`"),
+                            "unknown authentication tag `13`",
                         ));
                     }
                 }
@@ -562,13 +562,14 @@ impl AuthenticationSaslFinalBody {
 }
 
 /// Authentication mode: determines how auth codes 10/11/13 are dispatched.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub enum AuthMode {
     /// Standard PostgreSQL / PolarDB dispatch:
     /// - Code 10 → `AuthenticationSasl`
     /// - Code 11 → `AuthenticationSaslContinue`
     /// - Code 12 → `AuthenticationSaslFinal`
     /// - Code 13 → error (not used)
+    #[default]
     Standard,
     /// openGauss-specific dispatch:
     /// - Code 10 → `AuthenticationSha256Password`
@@ -576,12 +577,6 @@ pub enum AuthMode {
     /// - Code 12 → `AuthenticationSaslFinal`
     /// - Code 13 → `AuthenticationSm3Password`
     OpenGauss,
-}
-
-impl Default for AuthMode {
-    fn default() -> AuthMode {
-        AuthMode::Standard
-    }
 }
 
 pub const PLAIN_PASSWORD: i32 = 0;

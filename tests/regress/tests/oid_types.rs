@@ -1,3 +1,5 @@
+#![cfg(feature = "integration")]
+
 use gaussdb::{Client, Row, tls::NoTls};
 use std::path::PathBuf;
 
