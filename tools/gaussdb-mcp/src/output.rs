@@ -49,14 +49,27 @@ pub(crate) fn format_value_with_type(row: &Row, idx: usize, ty: &Type) -> Value 
                 .ok()
                 .map(|v| v.map(|x| json!(x)).unwrap_or(Value::Null))
         }),
-        Type::INT4 | Type::OID | Type::REGPROC | Type::REGTYPE => {
-            typed_or_raw(row, idx, ty, |r, i| {
-                r.try_get::<_, Option<i32>>(i)
-                    .ok()
-                    .map(|v| v.map(|x| json!(x)).unwrap_or(Value::Null))
-            })
-        }
-        Type::INT8 | Type::REGCLASS => typed_or_raw(row, idx, ty, |r, i| {
+        Type::INT4 => typed_or_raw(row, idx, ty, |r, i| {
+            r.try_get::<_, Option<i32>>(i)
+                .ok()
+                .map(|v| v.map(|x| json!(x)).unwrap_or(Value::Null))
+        }),
+        Type::OID
+        | Type::REGPROC
+        | Type::REGPROCEDURE
+        | Type::REGOPER
+        | Type::REGOPERATOR
+        | Type::REGCLASS
+        | Type::REGTYPE
+        | Type::REGNAMESPACE
+        | Type::REGCOLLATION
+        | Type::XID
+        | Type::CID => typed_or_raw(row, idx, ty, |r, i| {
+            r.try_get::<_, Option<u32>>(i)
+                .ok()
+                .map(|v| v.map(|x| json!(x)).unwrap_or(Value::Null))
+        }),
+        Type::INT8 => typed_or_raw(row, idx, ty, |r, i| {
             r.try_get::<_, Option<i64>>(i)
                 .ok()
                 .map(|v| v.map(|x| json!(x)).unwrap_or(Value::Null))
@@ -173,14 +186,27 @@ pub(crate) fn format_field_string(row: &Row, idx: usize, ty: &Type) -> Option<St
                 .ok()
                 .map(|v| v.map(|x| x.to_string()))
         }),
-        Type::INT4 | Type::OID | Type::REGPROC | Type::REGTYPE => {
-            typed_or_raw_str(row, idx, ty, |r, i| {
-                r.try_get::<_, Option<i32>>(i)
-                    .ok()
-                    .map(|v| v.map(|x| x.to_string()))
-            })
-        }
-        Type::INT8 | Type::REGCLASS => typed_or_raw_str(row, idx, ty, |r, i| {
+        Type::INT4 => typed_or_raw_str(row, idx, ty, |r, i| {
+            r.try_get::<_, Option<i32>>(i)
+                .ok()
+                .map(|v| v.map(|x| x.to_string()))
+        }),
+        Type::OID
+        | Type::REGPROC
+        | Type::REGPROCEDURE
+        | Type::REGOPER
+        | Type::REGOPERATOR
+        | Type::REGCLASS
+        | Type::REGTYPE
+        | Type::REGNAMESPACE
+        | Type::REGCOLLATION
+        | Type::XID
+        | Type::CID => typed_or_raw_str(row, idx, ty, |r, i| {
+            r.try_get::<_, Option<u32>>(i)
+                .ok()
+                .map(|v| v.map(|x| x.to_string()))
+        }),
+        Type::INT8 => typed_or_raw_str(row, idx, ty, |r, i| {
             r.try_get::<_, Option<i64>>(i)
                 .ok()
                 .map(|v| v.map(|x| x.to_string()))

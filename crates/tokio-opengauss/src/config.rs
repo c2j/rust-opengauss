@@ -235,6 +235,7 @@ pub struct Config {
     pub(crate) target_session_attrs: TargetSessionAttrs,
     pub(crate) channel_binding: ChannelBinding,
     pub(crate) load_balance_hosts: LoadBalanceHosts,
+    pub(crate) opengauss_compat: bool,
 }
 
 impl Default for Config {
@@ -269,6 +270,7 @@ impl Config {
             target_session_attrs: TargetSessionAttrs::Any,
             channel_binding: ChannelBinding::Prefer,
             load_balance_hosts: LoadBalanceHosts::Disable,
+            opengauss_compat: false,
         }
     }
 
@@ -564,6 +566,20 @@ impl Config {
         self.load_balance_hosts
     }
 
+    /// Sets openGauss compatibility mode.
+    ///
+    /// In openGauss mode, auth codes 10/11 are parsed as openGauss-specific
+    /// SHA256/MD5+SHA256 instead of standard PostgreSQL SASL. Defaults to `false`.
+    pub fn opengauss_compat(&mut self, opengauss_compat: bool) -> &mut Config {
+        self.opengauss_compat = opengauss_compat;
+        self
+    }
+
+    /// Gets the openGauss compatibility mode setting.
+    pub fn get_opengauss_compat(&self) -> bool {
+        self.opengauss_compat
+    }
+
     fn param(&mut self, key: &str, value: &str) -> Result<(), Error> {
         match key {
             "user" => {
@@ -712,6 +728,18 @@ impl Config {
                 };
                 self.load_balance_hosts(load_balance_hosts);
             }
+            "opengauss_compat" => {
+                let compat = match value {
+                    "true" | "1" | "on" => true,
+                    "false" | "0" | "off" => false,
+                    _ => {
+                        return Err(Error::config_parse(Box::new(InvalidValue(
+                            "opengauss_compat",
+                        ))));
+                    }
+                };
+                self.opengauss_compat(compat);
+            }
             key => {
                 return Err(Error::config_parse(Box::new(UnknownOption(
                     key.to_string(),
@@ -797,6 +825,7 @@ impl fmt::Debug for Config {
             .field("target_session_attrs", &self.target_session_attrs)
             .field("channel_binding", &self.channel_binding)
             .field("load_balance_hosts", &self.load_balance_hosts)
+            .field("opengauss_compat", &self.opengauss_compat)
             .finish()
     }
 }

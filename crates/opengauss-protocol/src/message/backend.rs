@@ -114,9 +114,65 @@ pub enum Message {
     NegotiateProtocolVersion(NegotiateProtocolVersionBody),
 }
 
+use std::fmt;
+
+impl fmt::Debug for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Show just the variant name without fields for brevity
+        let name = match self {
+            Message::AuthenticationCleartextPassword => "AuthenticationCleartextPassword",
+            Message::AuthenticationGss => "AuthenticationGss",
+            Message::AuthenticationKerberosV5 => "AuthenticationKerberosV5",
+            Message::AuthenticationMd5Password(_) => "AuthenticationMd5Password",
+            Message::AuthenticationOk => "AuthenticationOk",
+            Message::AuthenticationScmCredential => "AuthenticationScmCredential",
+            Message::AuthenticationSspi => "AuthenticationSspi",
+            Message::AuthenticationGssContinue(_) => "AuthenticationGssContinue",
+            Message::AuthenticationSasl(_) => "AuthenticationSasl",
+            Message::AuthenticationSaslContinue(_) => "AuthenticationSaslContinue",
+            Message::AuthenticationSaslFinal(_) => "AuthenticationSaslFinal",
+            Message::AuthenticationSha256Password(_) => "AuthenticationSha256Password",
+            Message::AuthenticationMd5Sha256Password(_) => "AuthenticationMd5Sha256Password",
+            Message::AuthenticationSm3Password(_) => "AuthenticationSm3Password",
+            Message::BackendKeyData(_) => "BackendKeyData",
+            Message::BindComplete => "BindComplete",
+            Message::CloseComplete => "CloseComplete",
+            Message::CommandComplete(_) => "CommandComplete",
+            Message::CopyData(_) => "CopyData",
+            Message::CopyDone => "CopyDone",
+            Message::CopyInResponse(_) => "CopyInResponse",
+            Message::CopyOutResponse(_) => "CopyOutResponse",
+            Message::DataRow(_) => "DataRow",
+            Message::EmptyQueryResponse => "EmptyQueryResponse",
+            Message::ErrorResponse(_) => "ErrorResponse",
+            Message::NoData => "NoData",
+            Message::NoticeResponse(_) => "NoticeResponse",
+            Message::NotificationResponse(_) => "NotificationResponse",
+            Message::ParameterDescription(_) => "ParameterDescription",
+            Message::ParameterStatus(_) => "ParameterStatus",
+            Message::ParseComplete => "ParseComplete",
+            Message::PortalSuspended => "PortalSuspended",
+            Message::ReadyForQuery(_) => "ReadyForQuery",
+            Message::RowDescription(_) => "RowDescription",
+            Message::NegotiateProtocolVersion(_) => "NegotiateProtocolVersion",
+        };
+        f.write_str(name)
+    }
+}
+
 impl Message {
+    /// Parses a backend message with the default [`AuthMode::Standard`] mode.
     #[inline]
     pub fn parse(buf: &mut BytesMut) -> io::Result<Option<Message>> {
+        Message::parse_with_mode(buf, AuthMode::Standard)
+    }
+
+    /// Parses a backend message, dispatching auth codes according to `mode`.
+    ///
+    /// Auth codes 10, 11, and 13 are dispatched differently depending on
+    /// whether the server is standard PostgreSQL/PolarDB or openGauss.
+    #[inline]
+    pub fn parse_with_mode(buf: &mut BytesMut, mode: AuthMode) -> io::Result<Option<Message>> {
         if buf.len() < 5 {
             let to_read = 5 - buf.len();
             buf.reserve(to_read);
@@ -229,76 +285,95 @@ impl Message {
                 }
                 9 => Message::AuthenticationSspi,
                 10 => {
-                    let password_stored_method = buf.read_i32::<BigEndian>()?;
-                    match password_stored_method {
-                        SHA256_PASSWORD | PLAIN_PASSWORD => {
-                            let mut random64code = [0u8; 64];
-                            buf.read_exact(&mut random64code)?;
-                            let mut token = [0u8; 8];
-                            buf.read_exact(&mut token)?;
-                            let server_iteration = buf.read_i32::<BigEndian>()?;
-                            Message::AuthenticationSha256Password(
-                                AuthenticationSha256PasswordBody {
-                                    password_stored_method,
-                                    random64code: Some(random64code),
-                                    token: Some(token),
-                                    server_iteration: Some(server_iteration),
-                                    md5_salt: None,
-                                },
-                            )
+                    if mode == AuthMode::OpenGauss {
+                        // openGauss SHA256: body starts with password_stored_method i32
+                        let password_stored_method = buf.read_i32::<BigEndian>()?;
+                        match password_stored_method {
+                            SHA256_PASSWORD | PLAIN_PASSWORD => {
+                                let mut random64code = [0u8; 64];
+                                buf.read_exact(&mut random64code)?;
+                                let mut token = [0u8; 8];
+                                buf.read_exact(&mut token)?;
+                                let server_iteration = buf.read_i32::<BigEndian>()?;
+                                Message::AuthenticationSha256Password(
+                                    AuthenticationSha256PasswordBody {
+                                        password_stored_method,
+                                        random64code: Some(random64code),
+                                        token: Some(token),
+                                        server_iteration: Some(server_iteration),
+                                        md5_salt: None,
+                                    },
+                                )
+                            }
+                            MD5_PASSWORD => {
+                                let mut md5_salt = [0u8; 4];
+                                buf.read_exact(&mut md5_salt)?;
+                                Message::AuthenticationSha256Password(
+                                    AuthenticationSha256PasswordBody {
+                                        password_stored_method,
+                                        random64code: None,
+                                        token: None,
+                                        server_iteration: None,
+                                        md5_salt: Some(md5_salt),
+                                    },
+                                )
+                            }
+                            _ => {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidInput,
+                                    format!(
+                                        "unknown password stored method `{password_stored_method}`"
+                                    ),
+                                ));
+                            }
                         }
-                        MD5_PASSWORD => {
-                            let mut md5_salt = [0u8; 4];
-                            buf.read_exact(&mut md5_salt)?;
-                            Message::AuthenticationSha256Password(
-                                AuthenticationSha256PasswordBody {
-                                    password_stored_method,
-                                    random64code: None,
-                                    token: None,
-                                    server_iteration: None,
-                                    md5_salt: Some(md5_salt),
-                                },
-                            )
-                        }
-                        _ => {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidInput,
-                                format!(
-                                    "unknown password stored method `{password_stored_method}`"
-                                ),
-                            ));
-                        }
+                    } else {
+                        // Standard PostgreSQL SASL: list of NUL-terminated mechanisms
+                        let storage = buf.read_all();
+                        Message::AuthenticationSasl(AuthenticationSaslBody(storage))
                     }
                 }
                 11 => {
-                    // AUTH_REQ_MD5_SHA256: salt[64 hex] + md5Salt[4 bytes]
-                    let mut salt = [0u8; 64];
-                    buf.read_exact(&mut salt)?;
-                    let mut md5_salt = [0u8; 4];
-                    buf.read_exact(&mut md5_salt)?;
-                    Message::AuthenticationMd5Sha256Password(AuthenticationMd5Sha256PasswordBody {
-                        salt,
-                        md5_salt,
-                    })
+                    if mode == AuthMode::OpenGauss {
+                        // AUTH_REQ_MD5_SHA256: salt[64 hex] + md5Salt[4 bytes]
+                        let mut salt = [0u8; 64];
+                        buf.read_exact(&mut salt)?;
+                        let mut md5_salt = [0u8; 4];
+                        buf.read_exact(&mut md5_salt)?;
+                        Message::AuthenticationMd5Sha256Password(
+                            AuthenticationMd5Sha256PasswordBody { salt, md5_salt },
+                        )
+                    } else {
+                        // Standard PostgreSQL SASL continue
+                        let storage = buf.read_all();
+                        Message::AuthenticationSaslContinue(AuthenticationSaslContinueBody(storage))
+                    }
                 }
                 12 => {
                     let storage = buf.read_all();
                     Message::AuthenticationSaslFinal(AuthenticationSaslFinalBody(storage))
                 }
                 13 => {
-                    // AUTH_REQ_SM3: same wire format as SHA256 (nested sub-match)
-                    let password_stored_method = buf.read_i32::<BigEndian>()?;
-                    let mut random64code = [0u8; 64];
-                    buf.read_exact(&mut random64code)?;
-                    let mut token = [0u8; 8];
-                    buf.read_exact(&mut token)?;
-                    let server_iteration = buf.read_i32::<BigEndian>()?;
-                    Message::AuthenticationSm3Password(AuthenticationSm3PasswordBody {
-                        password_stored_method,
-                        random64code,
-                        token,
-                        server_iteration,
-                    })
+                    if mode == AuthMode::OpenGauss {
+                        // AUTH_REQ_SM3: same wire format as SHA256 (nested sub-match)
+                        let password_stored_method = buf.read_i32::<BigEndian>()?;
+                        let mut random64code = [0u8; 64];
+                        buf.read_exact(&mut random64code)?;
+                        let mut token = [0u8; 8];
+                        buf.read_exact(&mut token)?;
+                        let server_iteration = buf.read_i32::<BigEndian>()?;
+                        Message::AuthenticationSm3Password(AuthenticationSm3PasswordBody {
+                            password_stored_method,
+                            random64code,
+                            token,
+                            server_iteration,
+                        })
+                    } else {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            format!("unknown authentication tag `13`"),
+                        ));
+                    }
                 }
                 tag => {
                     return Err(io::Error::new(
@@ -409,6 +484,7 @@ impl Read for Buffer {
     }
 }
 
+#[derive(Debug)]
 pub struct AuthenticationMd5PasswordBody {
     salt: [u8; 4],
 }
@@ -420,6 +496,7 @@ impl AuthenticationMd5PasswordBody {
     }
 }
 
+#[derive(Debug)]
 pub struct AuthenticationGssContinueBody(Bytes);
 
 impl AuthenticationGssContinueBody {
@@ -429,6 +506,7 @@ impl AuthenticationGssContinueBody {
     }
 }
 
+#[derive(Debug)]
 pub struct AuthenticationSaslBody(Bytes);
 
 impl AuthenticationSaslBody {
@@ -463,6 +541,7 @@ impl<'a> FallibleIterator for SaslMechanisms<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct AuthenticationSaslContinueBody(Bytes);
 
 impl AuthenticationSaslContinueBody {
@@ -472,6 +551,7 @@ impl AuthenticationSaslContinueBody {
     }
 }
 
+#[derive(Debug)]
 pub struct AuthenticationSaslFinalBody(Bytes);
 
 impl AuthenticationSaslFinalBody {
@@ -481,10 +561,34 @@ impl AuthenticationSaslFinalBody {
     }
 }
 
+/// Authentication mode: determines how auth codes 10/11/13 are dispatched.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum AuthMode {
+    /// Standard PostgreSQL / PolarDB dispatch:
+    /// - Code 10 → `AuthenticationSasl`
+    /// - Code 11 → `AuthenticationSaslContinue`
+    /// - Code 12 → `AuthenticationSaslFinal`
+    /// - Code 13 → error (not used)
+    Standard,
+    /// openGauss-specific dispatch:
+    /// - Code 10 → `AuthenticationSha256Password`
+    /// - Code 11 → `AuthenticationMd5Sha256Password`
+    /// - Code 12 → `AuthenticationSaslFinal`
+    /// - Code 13 → `AuthenticationSm3Password`
+    OpenGauss,
+}
+
+impl Default for AuthMode {
+    fn default() -> AuthMode {
+        AuthMode::Standard
+    }
+}
+
 pub const PLAIN_PASSWORD: i32 = 0;
 pub const MD5_PASSWORD: i32 = 1;
 pub const SHA256_PASSWORD: i32 = 2;
 
+#[derive(Debug)]
 pub struct AuthenticationSha256PasswordBody {
     password_stored_method: i32,
     random64code: Option<[u8; 64]>,
@@ -526,6 +630,7 @@ pub const SM3_PASSWORD: i32 = 3;
 /// Body of `AuthenticationMd5Sha256Password` message.
 ///
 /// Wire format: salt[64 hex chars] + md5_salt[4 bytes]
+#[derive(Debug)]
 pub struct AuthenticationMd5Sha256PasswordBody {
     salt: [u8; 64],
     md5_salt: [u8; 4],
@@ -550,6 +655,7 @@ impl AuthenticationMd5Sha256PasswordBody {
 ///   byte[64]  random64code (salt as hex)
 ///   byte[8]   token (as hex)
 ///   i32 BE    server_iteration
+#[derive(Debug)]
 pub struct AuthenticationSm3PasswordBody {
     password_stored_method: i32,
     random64code: [u8; 64],
@@ -1076,4 +1182,186 @@ fn find_null(buf: &[u8], start: usize) -> io::Result<usize> {
 #[inline]
 fn get_str(buf: &[u8]) -> io::Result<&str> {
     str::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_auth_message(auth_code: i32, body: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.push(AUTHENTICATION_TAG);
+        // The wire length includes itself (4) + auth_code (4) + body
+        let msg_len = 4 + 4 + body.len();
+        buf.extend_from_slice(&(msg_len as u32).to_be_bytes());
+        buf.extend_from_slice(&auth_code.to_be_bytes());
+        buf.extend_from_slice(body);
+        buf
+    }
+
+    fn parse_bytes(buf: &[u8], mode: AuthMode) -> io::Result<Message> {
+        let mut bytes_mut = BytesMut::from(buf);
+        let msg = Message::parse_with_mode(&mut bytes_mut, mode)?;
+        msg.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete message"))
+    }
+
+    // ---- Code 10 + Standard mode → AuthenticationSasl ----
+    #[test]
+    fn code10_sasl_standard_mode() {
+        let mechs = b"SCRAM-SHA-256\0SCRAM-SHA-256-PLUS\0\0";
+        let buf = make_auth_message(10, mechs);
+        let msg = parse_bytes(&buf, AuthMode::Standard).unwrap();
+
+        match msg {
+            Message::AuthenticationSasl(body) => {
+                let mechs: Vec<_> = body.mechanisms().collect::<Vec<_>>().unwrap();
+                assert_eq!(mechs, vec!["SCRAM-SHA-256", "SCRAM-SHA-256-PLUS"]);
+            }
+            other => panic!("expected AuthenticationSasl, got {other:?}"),
+        }
+    }
+
+    // ---- Code 10 + OpenGauss mode → AuthenticationSha256Password ----
+    #[test]
+    fn code10_sha256_opengauss_mode() {
+        let mut body = Vec::new();
+        // password_stored_method = SHA256_PASSWORD (2)
+        body.extend_from_slice(&2i32.to_be_bytes());
+        // random64code = [0x41; 64]
+        let random64code = [0x41u8; 64];
+        body.extend_from_slice(&random64code);
+        // token = [0x42; 8]
+        let token = [0x42u8; 8];
+        body.extend_from_slice(&token);
+        // server_iteration = 10000
+        body.extend_from_slice(&10000i32.to_be_bytes());
+
+        let buf = make_auth_message(10, &body);
+        let msg = parse_bytes(&buf, AuthMode::OpenGauss).unwrap();
+
+        match msg {
+            Message::AuthenticationSha256Password(sha_body) => {
+                assert_eq!(sha_body.password_stored_method(), SHA256_PASSWORD);
+                assert_eq!(sha_body.random64code(), Some(&random64code));
+                assert_eq!(sha_body.token(), Some(&token));
+                assert_eq!(sha_body.server_iteration(), Some(10000));
+            }
+            other => panic!("expected AuthenticationSha256Password, got {other:?}"),
+        }
+    }
+
+    // ---- Code 11 + Standard mode → AuthenticationSaslContinue ----
+    #[test]
+    fn code11_sasl_continue_standard_mode() {
+        let data = b"salt=abc123,iter=4096";
+        let buf = make_auth_message(11, data);
+        let msg = parse_bytes(&buf, AuthMode::Standard).unwrap();
+
+        match msg {
+            Message::AuthenticationSaslContinue(body) => {
+                assert_eq!(body.data(), &data[..]);
+            }
+            other => panic!("expected AuthenticationSaslContinue, got {other:?}"),
+        }
+    }
+
+    // ---- Code 11 + OpenGauss mode → AuthenticationMd5Sha256Password ----
+    #[test]
+    fn code11_md5_sha256_opengauss_mode() {
+        let mut body = Vec::new();
+        let salt = [0x61u8; 64]; // 64 bytes of 'a'
+        body.extend_from_slice(&salt);
+        let md5_salt = [0x62, 0x63, 0x64, 0x65];
+        body.extend_from_slice(&md5_salt);
+
+        let buf = make_auth_message(11, &body);
+        let msg = parse_bytes(&buf, AuthMode::OpenGauss).unwrap();
+
+        match msg {
+            Message::AuthenticationMd5Sha256Password(md5_body) => {
+                assert_eq!(md5_body.salt(), &salt);
+                assert_eq!(md5_body.md5_salt(), &md5_salt);
+            }
+            other => panic!("expected AuthenticationMd5Sha256Password, got {other:?}"),
+        }
+    }
+
+    // ---- Code 12 + Standard mode → AuthenticationSaslFinal ----
+    #[test]
+    fn code12_sasl_final_standard_mode() {
+        let data = b"v=base64encodeddata";
+        let buf = make_auth_message(12, data);
+        let msg = parse_bytes(&buf, AuthMode::Standard).unwrap();
+
+        match msg {
+            Message::AuthenticationSaslFinal(body) => {
+                assert_eq!(body.data(), &data[..]);
+            }
+            other => panic!("expected AuthenticationSaslFinal, got {other:?}"),
+        }
+    }
+
+    // ---- Code 12 + OpenGauss mode → AuthenticationSaslFinal (same) ----
+    #[test]
+    fn code12_sasl_final_opengauss_mode() {
+        let data = b"v=base64encodeddata";
+        let buf = make_auth_message(12, data);
+        let msg = parse_bytes(&buf, AuthMode::OpenGauss).unwrap();
+
+        match msg {
+            Message::AuthenticationSaslFinal(body) => {
+                assert_eq!(body.data(), &data[..]);
+            }
+            other => panic!("expected AuthenticationSaslFinal, got {other:?}"),
+        }
+    }
+
+    // ---- Code 13 + OpenGauss mode → AuthenticationSm3Password ----
+    #[test]
+    fn code13_sm3_opengauss_mode() {
+        let mut body = Vec::new();
+        // password_stored_method = SM3_PASSWORD (3)
+        body.extend_from_slice(&3i32.to_be_bytes());
+        let random64code = [0x41u8; 64];
+        body.extend_from_slice(&random64code);
+        let token = [0x42u8; 8];
+        body.extend_from_slice(&token);
+        body.extend_from_slice(&5000i32.to_be_bytes());
+
+        let buf = make_auth_message(13, &body);
+        let msg = parse_bytes(&buf, AuthMode::OpenGauss).unwrap();
+
+        match msg {
+            Message::AuthenticationSm3Password(sm3_body) => {
+                assert_eq!(sm3_body.password_stored_method(), SM3_PASSWORD);
+                assert_eq!(sm3_body.random64code(), &random64code);
+                assert_eq!(sm3_body.token(), &token);
+                assert_eq!(sm3_body.server_iteration(), 5000);
+            }
+            other => panic!("expected AuthenticationSm3Password, got {other:?}"),
+        }
+    }
+
+    // ---- Code 13 + Standard mode → error ----
+    #[test]
+    fn code13_standard_mode_error() {
+        let buf = make_auth_message(13, b"some data");
+        let result = parse_bytes(&buf, AuthMode::Standard);
+        assert!(result.is_err());
+    }
+
+    // ---- Legacy parse() defaults to Standard mode ----
+    #[test]
+    fn legacy_parse_defaults_to_standard() {
+        let mechs = b"SCRAM-SHA-256\0\0";
+        let buf = make_auth_message(10, mechs);
+        let mut bytes_mut = BytesMut::from(&buf[..]);
+        let msg = Message::parse(&mut bytes_mut)
+            .unwrap()
+            .expect("incomplete message");
+        match msg {
+            Message::AuthenticationSasl(_) => {}
+            other => panic!("expected AuthenticationSasl from legacy parse(), got {other:?}"),
+        }
+    }
 }

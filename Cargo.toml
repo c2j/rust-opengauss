@@ -9,6 +9,7 @@ members = [
     "crates/opengauss-types",
     "crates/tokio-opengauss",
     "tests/opengauss-derive-test",
+    "tests/regress",
     "tools/codegen",
     "tools/gaussdb-mcp",
 ]

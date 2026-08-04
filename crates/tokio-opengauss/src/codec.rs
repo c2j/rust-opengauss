@@ -18,11 +18,21 @@ pub enum BackendMessage {
     Async(backend::Message),
 }
 
-pub struct BackendMessages(BytesMut);
+pub struct BackendMessages {
+    buf: BytesMut,
+    mode: backend::AuthMode,
+}
 
 impl BackendMessages {
     pub fn empty() -> BackendMessages {
-        BackendMessages(BytesMut::new())
+        BackendMessages {
+            buf: BytesMut::new(),
+            mode: backend::AuthMode::Standard,
+        }
+    }
+
+    pub fn with_mode(buf: BytesMut, mode: backend::AuthMode) -> BackendMessages {
+        BackendMessages { buf, mode }
     }
 }
 
@@ -31,11 +41,19 @@ impl FallibleIterator for BackendMessages {
     type Error = io::Error;
 
     fn next(&mut self) -> io::Result<Option<backend::Message>> {
-        backend::Message::parse(&mut self.0)
+        backend::Message::parse_with_mode(&mut self.buf, self.mode)
     }
 }
 
-pub struct PostgresCodec;
+pub struct PostgresCodec {
+    mode: backend::AuthMode,
+}
+
+impl PostgresCodec {
+    pub fn new(mode: backend::AuthMode) -> PostgresCodec {
+        PostgresCodec { mode }
+    }
+}
 
 impl Encoder<FrontendMessage> for PostgresCodec {
     type Error = io::Error;
@@ -69,7 +87,7 @@ impl Decoder for PostgresCodec {
                 | backend::NOTIFICATION_RESPONSE_TAG
                 | backend::PARAMETER_STATUS_TAG => {
                     if idx == 0 {
-                        let message = backend::Message::parse(src)?.unwrap();
+                        let message = backend::Message::parse_with_mode(src, self.mode)?.unwrap();
                         return Ok(Some(BackendMessage::Async(message)));
                     } else {
                         break;
@@ -90,7 +108,7 @@ impl Decoder for PostgresCodec {
             Ok(None)
         } else {
             Ok(Some(BackendMessage::Normal {
-                messages: BackendMessages(src.split_to(idx)),
+                messages: BackendMessages::with_mode(src.split_to(idx), self.mode),
                 request_complete,
             }))
         }

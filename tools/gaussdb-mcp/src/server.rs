@@ -1227,7 +1227,7 @@ impl GaussdbMcp {
 
 #[tool_handler(
     name = "gaussdb",
-    version = "0.5.4",
+    version = "0.5.5",
     instructions = "MCP server for openGauss database introspection with multi-connection support"
 )]
 impl ServerHandler for GaussdbMcp {}

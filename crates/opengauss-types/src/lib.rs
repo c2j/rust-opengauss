@@ -770,7 +770,21 @@ simple_from!(bool, bool_from_sql, BOOL);
 simple_from!(i8, char_from_sql, CHAR);
 simple_from!(i16, int2_from_sql, INT2);
 simple_from!(i32, int4_from_sql, INT4);
-simple_from!(u32, oid_from_sql, OID);
+simple_from!(
+    u32,
+    oid_from_sql,
+    OID,
+    REGPROC,
+    REGPROCEDURE,
+    REGOPER,
+    REGOPERATOR,
+    REGCLASS,
+    REGTYPE,
+    REGNAMESPACE,
+    REGCOLLATION,
+    XID,
+    CID
+);
 simple_from!(i64, int8_from_sql, INT8);
 simple_from!(f32, float4_from_sql, FLOAT4);
 simple_from!(f64, float8_from_sql, FLOAT8);
