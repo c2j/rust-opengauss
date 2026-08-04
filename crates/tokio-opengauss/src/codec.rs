@@ -87,8 +87,7 @@ impl Decoder for PostgresCodec {
                 | backend::NOTIFICATION_RESPONSE_TAG
                 | backend::PARAMETER_STATUS_TAG => {
                     if idx == 0 {
-                        let message =
-                            backend::Message::parse_with_mode(src, self.mode)?.unwrap();
+                        let message = backend::Message::parse_with_mode(src, self.mode)?.unwrap();
                         return Ok(Some(BackendMessage::Async(message)));
                     } else {
                         break;

@@ -341,10 +341,7 @@ impl Message {
                         let mut md5_salt = [0u8; 4];
                         buf.read_exact(&mut md5_salt)?;
                         Message::AuthenticationMd5Sha256Password(
-                            AuthenticationMd5Sha256PasswordBody {
-                                salt,
-                                md5_salt,
-                            },
+                            AuthenticationMd5Sha256PasswordBody { salt, md5_salt },
                         )
                     } else {
                         // Standard PostgreSQL SASL continue

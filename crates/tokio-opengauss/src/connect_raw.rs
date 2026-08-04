@@ -12,7 +12,9 @@ use opengauss_protocol::authentication;
 use opengauss_protocol::authentication::sasl;
 use opengauss_protocol::authentication::sasl::ScramSha256;
 use opengauss_protocol::authentication::sha256;
-use opengauss_protocol::message::backend::{AuthenticationSaslBody, AuthMode, Message, SHA256_PASSWORD};
+use opengauss_protocol::message::backend::{
+    AuthMode, AuthenticationSaslBody, Message, SHA256_PASSWORD,
+};
 use opengauss_protocol::message::frontend;
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
