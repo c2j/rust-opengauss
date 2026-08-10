@@ -100,7 +100,9 @@ OPTIONS:
     -v, --verbose               显示详细连接信息（配合 --check-connection）
         --name <NAME>           目标连接名称
         --config <PATH>         配置文件路径
-        --format <FMT>          输出格式: table, json, vertical, csv [默认: table]
+        --format <FMT>          输出格式: table, json, vertical, csv, parquet [默认: table]
+        --parquet-batch-size    --format parquet 时每个 RecordBatch 的行数 [默认: 65536]
+        --parquet-compression   Parquet 压缩算法: none | snappy | zstd [默认: snappy]
         --statement-timeout     覆盖配置中的语句超时时间
         --no-history            不读写持久化的 SQL 历史记录（交互模式）
 ```
@@ -120,6 +122,11 @@ gaussdb cli --sql "SELECT * FROM users LIMIT 5" --format vertical
 # CSV 导出（RFC 4180，流式输出到 stdout；重定向到文件即可保存）
 gaussdb cli --sql "SELECT * FROM users" --format csv > users.csv
 
+# Parquet 导出（列式、压缩）。统计信息输出到 stderr。
+gaussdb cli --sql "SELECT * FROM users" --format parquet > users.parquet
+gaussdb cli --sql "SELECT * FROM big_table" --format parquet \
+  --parquet-compression zstd --parquet-batch-size 100000 > big.parquet
+
 # 支持 DML/DDL 语句
 gaussdb cli --sql "INSERT INTO logs VALUES (1, 'hello')"
 gaussdb cli --sql "CREATE TABLE test (id int)"
@@ -130,6 +137,78 @@ gaussdb cli --name prod --sql "SELECT count(*) FROM orders"
 # 检查指定连接的连通性
 gaussdb cli --check-connection --name prod
 ```
+
+#### Parquet 导出详解
+
+`--format parquet` 通过 Arrow `RecordBatch` 把行流式编码为列式、压缩的 Apache Parquet 文件。当导出数据用于 OLAP / 数据湖 / 下游分析工具（DuckDB、Spark、pandas、BigQuery 等）时推荐使用 —— Parquet 的列式存储加压缩通常比 CSV 小 5–10 倍，下游扫描快 10–50 倍。
+
+```sh
+# 默认: snappy 压缩，65536 行一批
+gaussdb cli --sql "SELECT * FROM sales" --format parquet > sales.parquet
+
+# 最大压缩比（编码约慢 2 倍，文本密集数据上比 snappy 再小约 40%）
+gaussdb cli --sql "SELECT * FROM sales" --format parquet --parquet-compression zstd > sales.parquet
+
+# 调整 row group 大小: 越大压缩越好 + 内存峰值越高
+gaussdb cli --sql "SELECT * FROM sales" --format parquet --parquet-batch-size 100000 > sales.parquet
+```
+
+进度信息输出到 stderr（parquet 字节流写到 stdout）：
+
+```
+1000 rows written (22346 bytes, compression=zstd, batch_size=65536)
+```
+
+##### 类型映射（PostgreSQL → Arrow）
+
+| PostgreSQL | Arrow | 说明 |
+|------------|-------|------|
+| `int2` / `int4` / `int8` | `int16` / `int32` / `int64` | 直接映射 |
+| `float4` / `float8` | `float` / `double` | 直接映射 |
+| `bool` | `bool` | 直接映射 |
+| `bytea` | `binary` | 直接映射 |
+| `numeric` | `decimal128(p, s)` | 精度从首批行采样（见下） |
+| `varchar` / `text` / `bpchar` / `name` | `utf8` | 直接映射 |
+| `uuid` / `json` / `jsonb` | `utf8` | 规范字符串形式 |
+| `date` | `date32` | 自 epoch 的天数 |
+| `timestamp` | `timestamp[ns]` | |
+| `timestamptz` | `timestamp[ns, tz=UTC]` | 归一化到 UTC |
+| `time` / `timetz` | `time64[ns]` | `timetz` 丢失时区信息 |
+| `oid` 系列 / `xid` / `cid` | `int64` | PG `u32` 拓宽 |
+| `inet` / `cidr` / `macaddr` / `interval` / 自定义类型 | `utf8` | 字符串形式，与 CLI 文本渲染一致 |
+
+##### NUMERIC 精度采样
+
+导出器检查第一批（默认前 65 536 行）来推导 `decimal128(precision, scale)`：
+
+- 全 NULL 列 → `decimal128(1, 0)`。
+- `precision > 38`（Decimal128 上限）→ 回退为 `utf8`（值的字符串形式）。
+- 否则 `precision = 采样内 max(整数位数) + max(scale)`，`scale = max(scale)`。
+
+schema 在第一批后固定，因此*后续*批次中 scale 比采样最大值更大的 NUMERIC 值会被 `rescale` 下调（有损截断）以保证编码的 `i128` mantissa 匹配 schema —— 读端解码保持一致。如果对全结果精度有严格要求，调大 `--parquet-batch-size` 让采样覆盖整个范围，或者服务端把列 cast 为 `text`。
+
+##### Parquet vs CSV — 如何选择
+
+| 维度 | CSV（服务端 `COPY`） | Parquet（客户端 Arrow） |
+|---|---|---|
+| 客户端 CPU | 几乎为零（字节直通） | 可观（列式构建 + 压缩） |
+| 内存 | O(1) 流式 | O(batch_size)，由 `--parquet-batch-size` 限制 |
+| 输出大小 | 大（未压缩文本） | 小 5–10 倍（列式 + snappy/zstd） |
+| 类型保真 | 全字符串（数值精度丢失） | 原生（int/float/decimal/timestamp） |
+| 下游加载 | 慢（重新解析） | 快 10–50 倍（列式扫描，谓词下推） |
+| 最适合 | 跨工具文本互操作、最快原始导出 | OLAP / 数据湖 / 长期归档 |
+
+内存说明：parquet 导出通过 `query_raw` 流式拉取行，一次只在内存中持有一个 `--parquet-batch-size` 行的 `RecordBatch`，因此无论结果集多大，峰值内存都是有界的（实测：10M 行 × ~200 字节源数据，默认 `batch_size=65536`，客户端峰值 RSS 仅约 250 MB）。CSV 客户端更省（服务端 `COPY` 是 O(1)），但 parquet 的有界内存使其适合百万行级导出。
+
+##### 构建配置
+
+Parquet 支持默认开启。要构建不含 Parquet 的精简二进制：
+
+```sh
+cargo build -p gaussdb-mcp --no-default-features
+```
+
+此时 `--format parquet` 会返回清晰的错误，提示缺少该 feature。
 
 ### 模式三：交互式 REPL
 
@@ -275,7 +354,9 @@ CLI:
     -i, --interactive          进入交互式 REPL 模式
         --check-connection     测试连接而不执行 SQL
     -v, --verbose              显示详细连接信息（配合 --check-connection）
-        --format <FMT>         输出格式: table, json, vertical, csv [默认: table]
+        --format <FMT>         输出格式: table, json, vertical, csv, parquet [默认: table]
+        --parquet-batch-size   --format parquet 时每个 RecordBatch 的行数 [默认: 65536]
+        --parquet-compression   Parquet 压缩算法: none | snappy | zstd [默认: snappy]
         --statement-timeout    覆盖配置中的语句超时 (如 "30s")
         --connection-max-lifetime  连接回收间隔 (如 "10min")
         --timeout-action       "cancel" (默认) 或 "disconnect"

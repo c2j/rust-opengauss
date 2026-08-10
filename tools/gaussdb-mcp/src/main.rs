@@ -3,6 +3,8 @@ mod config;
 mod connection;
 mod interactive;
 mod output;
+#[cfg(feature = "parquet-export")]
+mod parquet_export;
 mod queries;
 mod server;
 
@@ -75,9 +77,18 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
 
-        /// Output format: table, json, vertical, csv
+        /// Output format: table, json, vertical, csv, parquet
         #[arg(long, default_value = "table")]
         format: String,
+
+        /// Row group size for --format parquet (rows per RecordBatch).
+        /// Larger → better compression, higher peak memory. Default: 65536.
+        #[arg(long)]
+        parquet_batch_size: Option<usize>,
+
+        /// Parquet compression codec: none | snappy | zstd. Default: snappy.
+        #[arg(long)]
+        parquet_compression: Option<String>,
 
         /// Statement timeout (e.g. "30s", "5min"). Overrides config.
         #[arg(long)]
@@ -1165,6 +1176,8 @@ async fn main() {
             check_connection,
             verbose,
             format,
+            parquet_batch_size,
+            parquet_compression,
             statement_timeout,
             connection_max_lifetime,
             timeout_action,
@@ -1186,6 +1199,8 @@ async fn main() {
                     connection_max_lifetime,
                     timeout_action,
                     no_history,
+                    parquet_batch_size,
+                    parquet_compression,
                 };
                 if let Err(e) = interactive::run_interactive(args).await {
                     eprintln!("error: {}", e);
@@ -1203,6 +1218,8 @@ async fn main() {
                     connection_max_lifetime,
                     timeout_action,
                     no_history,
+                    parquet_batch_size,
+                    parquet_compression,
                 };
                 if let Err(e) = cli::run_cli(args).await {
                     eprintln!("error: {}", e);

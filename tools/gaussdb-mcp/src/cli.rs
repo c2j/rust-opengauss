@@ -66,6 +66,7 @@ pub(crate) enum OutputFormat {
     Json,
     Vertical,
     Csv,
+    Parquet,
 }
 
 impl FromStr for OutputFormat {
@@ -77,8 +78,9 @@ impl FromStr for OutputFormat {
             "json" => Ok(OutputFormat::Json),
             "vertical" => Ok(OutputFormat::Vertical),
             "csv" => Ok(OutputFormat::Csv),
+            "parquet" => Ok(OutputFormat::Parquet),
             _ => Err(format!(
-                "Unknown output format '{}'. Use table, json, vertical, or csv.",
+                "Unknown output format '{}'. Use table, json, vertical, csv, or parquet.",
                 s
             )),
         }
@@ -95,6 +97,8 @@ pub(crate) struct CliArgs {
     pub connection_max_lifetime: Option<String>,
     pub timeout_action: Option<String>,
     pub no_history: bool,
+    pub parquet_batch_size: Option<usize>,
+    pub parquet_compression: Option<String>,
 }
 
 // ---- helpers for interactive mode ----
@@ -279,6 +283,11 @@ pub(crate) fn render_result(
                         .flush()
                         .map_err(|e| format!("write error: {}", e))?;
                 }
+                OutputFormat::Parquet => {
+                    return Err("parquet output is not available in REPL `.save`; use \
+                         `gaussdb cli --format parquet --sql ... > file.parquet` instead."
+                        .to_string());
+                }
             }
         }
     }
@@ -391,6 +400,33 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
                 }
                 out.flush().map_err(|e| format!("flush error: {}", e))?;
             }
+            #[cfg(feature = "parquet-export")]
+            OutputFormat::Parquet => {
+                let opts = build_parquet_opts(
+                    args.parquet_batch_size,
+                    args.parquet_compression.as_deref(),
+                )?;
+
+                let stdout_buf = std::io::BufWriter::new(std::io::stdout());
+                let stats =
+                    crate::parquet_export::export_parquet(&client, trimmed, stdout_buf, &opts)
+                        .await?;
+                eprintln!(
+                    "{} rows written ({} bytes, compression={}, batch_size={})",
+                    stats.rows,
+                    stats.bytes,
+                    parquet_compression_label(opts.compression),
+                    opts.batch_size,
+                );
+            }
+            #[cfg(not(feature = "parquet-export"))]
+            OutputFormat::Parquet => {
+                return Err(
+                    "parquet export requires the 'parquet-export' cargo feature. \
+                     Build with `--features parquet-export` or use the default build."
+                        .to_string(),
+                );
+            }
             OutputFormat::Vertical => {
                 // O(1) memory: stream rows via query_raw instead of buffering.
                 let mut stream = std::pin::pin!(
@@ -485,6 +521,13 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
         }
     } else {
         // DML/DDL: use execute
+        if matches!(args.format, OutputFormat::Parquet) {
+            return Err(
+                "parquet export is only supported for SELECT/EXPLAIN/WITH queries; \
+                 DML/DDL has no row data to serialize."
+                    .to_string(),
+            );
+        }
         let rows_affected = client
             .execute(trimmed, &[])
             .await
@@ -493,6 +536,38 @@ pub(crate) async fn run_cli(args: CliArgs) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(feature = "parquet-export")]
+fn build_parquet_opts(
+    batch_size: Option<usize>,
+    compression: Option<&str>,
+) -> Result<crate::parquet_export::ParquetOpts, String> {
+    use crate::parquet_export::{DEFAULT_BATCH_SIZE, ParquetCompression, ParquetOpts};
+
+    let batch_size = batch_size.unwrap_or(DEFAULT_BATCH_SIZE);
+    if batch_size == 0 {
+        return Err("--parquet-batch-size must be > 0".to_string());
+    }
+    let compression = match compression {
+        Some(s) => ParquetCompression::parse(s)?.to_parquet(),
+        None => parquet::basic::Compression::SNAPPY,
+    };
+    Ok(ParquetOpts {
+        batch_size,
+        compression,
+    })
+}
+
+#[cfg(feature = "parquet-export")]
+fn parquet_compression_label(c: parquet::basic::Compression) -> &'static str {
+    use parquet::basic::Compression;
+    match c {
+        Compression::UNCOMPRESSED => "none",
+        Compression::SNAPPY => "snappy",
+        Compression::ZSTD(_) => "zstd",
+        _ => "(other)",
+    }
 }
 
 #[cfg(test)]
