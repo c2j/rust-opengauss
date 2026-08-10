@@ -1,6 +1,6 @@
 [package]
 name = "gaussdb-mcp"
-version = "0.5.5"
+version = "0.6.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "An MCP server for openGauss database introspection"
@@ -11,8 +11,11 @@ name = "gaussdb"
 path = "src/main.rs"
 
 [features]
-default = []
-full = []
+default = ["parquet-export"]
+full = ["parquet-export"]
+## Enable `--format parquet` export (Apache Arrow + Parquet).
+## On by default; disable with `--no-default-features` for a leaner build.
+parquet-export = ["dep:arrow", "dep:parquet"]
 ## Gates tests requiring a live DB at GAUSSDB_TEST_URL
 ## (or default host=127.0.0.1 port=5432 user=gaussdb).
 ## Off by default; enable with `--features integration` or `--all-features`.
@@ -47,3 +50,5 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 rustyline = "18"
 rustyline-derive = "0.12"
 rpassword = "7"
+arrow = { version = "59", default-features = false, optional = true }
+parquet = { version = "59", default-features = false, features = ["arrow", "snap", "zstd"], optional = true }

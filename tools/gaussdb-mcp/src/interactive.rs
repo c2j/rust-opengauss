@@ -370,6 +370,7 @@ fn handle_dot_command(line: &str, ctx: &mut ReplContext) -> DotAction {
                                 OutputFormat::Json => "json",
                                 OutputFormat::Vertical => "vertical",
                                 OutputFormat::Csv => "csv",
+                                OutputFormat::Parquet => "parquet",
                             };
                             println!(
                                 "saved {} row(s) to {} ({})",
