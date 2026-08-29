@@ -8,8 +8,8 @@ Pre-commit and CI requirements for this repository.
 
 ### 先读再改
 1. 确认改动落在哪个 crate（本仓库是 Cargo workspace，见「仓库地图」）。
-2. 只用本文件列出的 cargo 命令；不要发明裸 `cargo update`、不要擅自切换 toolchain（以 `rust-toolchain.toml` 为准）。
-3. 先跑与改动相关的最小测试；提交前再跑 workspace 门禁（fmt + clippy + test）。
+2. 只用本文件列出的 cargo 命令；不要发明裸 `cargo update`。本仓库**没有** `rust-toolchain.toml`，toolchain 以 CI 使用的 `stable` 为准，不要擅自切换或加 `+nightly`。
+3. 先跑与改动相关的最小测试；提交前再跑 workspace 门禁（fmt + clippy + test + wasm32 check，见「命令」）。
 4. 完成一个循环后按「完成标准与汇报」汇报，不要只说「做完了」。
 
 ### Never / Ask first / Always
@@ -24,10 +24,10 @@ Pre-commit and CI requirements for this repository.
 - 把探索草稿、临时脚本、调试 `dbg!`/`println!` 留在主代码
 
 **Ask first**
-- 改人类已有测试（含断言、fixture、snapshot）
+- 改人类已有测试（含断言、fixture、golden 期望值）
 - 新增运行时依赖、`unsafe`、新的 workspace crate、新的外部服务
 - 为不可测代码做超出当前改动路径的重构
-- 接受/更新 snapshot（insta / golden file）且行为含义发生变化
+- 接受/更新 golden file 或固定 fixture 的期望值，且行为含义发生变化
 - 关闭 clippy lint、新增 `#[allow]`
 
 **Always**
@@ -57,7 +57,7 @@ Pre-commit and CI requirements for this repository.
 
 ### 遗留代码与接缝
 
-**特征测试** — 锁定现有行为，不是证明它正确。用固定 fixture 或 `insta` snapshot。更新 snapshot 必须在汇报里写清 diff 含义；默认不接受「看起来差不多」。
+**特征测试** — 锁定现有行为，不是证明它正确。本仓库**未引入 `insta`**，用固定 fixture + 显式断言，或与 golden 文件逐字比对。更新期望值必须在汇报里写清 diff 含义；默认不接受「看起来差不多」。
 
 **接缝（优先顺序，靠后的更差）**
 1. trait + 泛型或 `impl Trait`，测试用假类型
@@ -76,7 +76,7 @@ Pre-commit and CI requirements for this repository.
 | 文档测试 | `///` 示例 | 公共 API 必须可运行；禁止滥用 `no_run` |
 | CLI/二进制 | 项目惯用方式 | 退出码与 stdout 契约 |
 | 不变量 | `proptest`（项目已用时） | 往返解析、幂等、单调性 |
-| 特征/快照 | `insta` 或固定 fixture | 遗留输出；接受 snapshot 必须说明 |
+| 特征/golden | 固定 fixture（本仓库未引入 `insta`） | 遗留输出；更新期望值必须说明 |
 
 不要把本该测公共契约的内容塞进 `#[cfg(test)]` 去读私有字段。
 
@@ -87,7 +87,7 @@ Rust 的 Red 允许是：测试引用了尚不存在的类型/函数导致编译
 - 无必要 `unsafe`；有则必须 `SAFETY` 注释
 - 一次性 `cargo update` 整个 lockfile
 - 用 `#[allow(...)]` 静默应修复的 lint
-- 为绿而改 snapshot 却不解释行为是否应该变
+- 为绿而改 golden/期望值却不解释行为是否应该变
 
 ### 命令
 
@@ -101,14 +101,25 @@ cargo test -p gaussdb-mcp
 # DB 集成测试（需先 docker compose up -d）
 cargo test -p tokio-opengauss --features integration
 
-# 提交前门禁
+# 提交前门禁（与 .github/workflows/ci.yml 对应）
 cargo fmt --all -- --check
 RUSTFLAGS="-Dwarnings" cargo clippy --all --all-targets
 cargo test --all
-cargo check --target wasm32-unknown-unknown
+cargo test --all --all-features
+cargo test --manifest-path crates/tokio-opengauss/Cargo.toml --no-default-features
+
+# wasm32 门禁：只针对 tokio-opengauss 的 js 后端，必须带全部参数
+cargo check --target wasm32-unknown-unknown \
+  --manifest-path crates/tokio-opengauss/Cargo.toml --no-default-features --features js
 ```
 
-> `cargo test --all`（默认 feature）不需要 DB；tokio-opengauss 集成测试在 `integration` feature 后. clippy 用 `RUSTFLAGS=-Dwarnings`，任何 warning 都是硬错误。`rustfmt.toml` 的 `imports_granularity = "Preserve"` 是 nightly-only，stable 下 warning 无害。
+> `cargo test --all`（默认 feature）不需要 DB；tokio-opengauss 的集成测试要显式开 `integration` feature，并且需要先 `docker compose up -d`。
+>
+> **wasm32 只能按上面的完整形式跑。** 裸 `cargo check --target wasm32-unknown-unknown` 一定失败——整个 workspace 含 native-tls / openssl / dbus 等不能编到 wasm 的依赖。CI 里这一步就是 `--manifest-path crates/tokio-opengauss/Cargo.toml --no-default-features --features js`。
+>
+> CI 的 clippy **没有**加 `-D warnings`（`cargo clippy --all --all-targets`），所以 warning 不会让 CI 变红。本文件要求本地用 `RUSTFLAGS="-Dwarnings"` 自查并修掉，不要因为「CI 绿」就留 warning。
+>
+> `rustfmt.toml` 的 `imports_granularity = "Preserve"` 是 nightly-only，stable 下的提示无害。
 
 循环内只跑受影响 crate；提交前再 workspace。
 
@@ -131,7 +142,7 @@ cargo check --target wasm32-unknown-unknown
 ### 质量判断（自我检查）
 - 这条测试在实现写错时会失败吗？
 - 我是否在测行为，而不是私有实现细节？
-- 我是否用 skip、更宽断言、unwrap、snapshot 盲收换绿？
+- 我是否用 skip、更宽断言、unwrap、golden 盲收换绿？
 - 命令是否来自本文件，而不是我编的？
 
 ## Pre-commit Checklist (MANDATORY)
